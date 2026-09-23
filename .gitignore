@@ -1,0 +1,19 @@
+# Secrets — this repository is public.
+.env
+*.env
+!*.env.example
+!env.example
+Infra/.env
+infra/.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# Tooling
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
