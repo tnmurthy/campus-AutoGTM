@@ -10,7 +10,7 @@ from app.schemas.lead import (
 )
 from app.services import orchestrator
 from app.services.jev_client import JevError
-from tests.fakes import FakeSupabase
+from tests.fakes import FakeCrm
 
 
 def make_campaign(**overrides) -> CampaignRead:
@@ -42,83 +42,98 @@ def stub_decision(score: float, label="strong_fit", send=True):
 def persisting(monkeypatch):
     monkeypatch.setenv("TYPESAFE_API_KEY", "test-key")
     monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
-    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "service-key")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "anon-key")
+    monkeypatch.setenv("SUPABASE_JWT_SECRET", "jwt-secret")
     get_settings.cache_clear()
 
 
 def patch_jev(monkeypatch, decision):
-    monkeypatch.setattr(
-        "agents.scoring_agent.call_jev", lambda state, questions: decision
-    )
+    calls = []
+
+    def fake(state, questions):
+        calls.append(state)
+        return decision
+
+    monkeypatch.setattr("agents.scoring_agent.call_jev", fake)
+    return calls
 
 
-def test_qualifying_lead_is_written_to_all_three_tables(persisting, monkeypatch):
+def test_qualifying_lead_is_ingested_in_one_batched_call(persisting, monkeypatch):
     patch_jev(monkeypatch, stub_decision(88))
-    client = FakeSupabase()
+    crm = FakeCrm()
 
-    leads = orchestrator.run_campaign(make_campaign(), client_factory=lambda: client)
+    leads = orchestrator.run_campaign(make_campaign(), crm=crm)
 
     assert [lead.status for lead in leads] == [STATUS_PERSISTED]
-    written = [table for table, _ in client.writes]
-    assert written == ["colleges", "contacts", "opportunities"]
+    assert len(crm.ingest_calls) == 1  # batched, not one call per lead
 
-    opportunity = client.rows["opportunities"][0]
-    assert opportunity["stage"] == "enquiry"
-    assert opportunity["opportunity_type"] == "hackathon"
-    assert opportunity["probability"] == 88
-    assert opportunity["notes"] == "Active T&P cell and recent hackathon."
+    sent = crm.ingest_calls[0][0]
+    assert sent["opportunity_type"] == "hackathon"
+    assert sent["fit_score"] == 88
+    assert sent["campaign_ref"] == "campaign-1"
+    # Stage and source are the database's to set, never sent from here.
+    assert "stage" not in sent and "source" not in sent
     assert leads[0].college_id and leads[0].opportunity_id
 
 
-def test_lead_below_threshold_is_skipped_and_never_written(persisting, monkeypatch):
-    patch_jev(monkeypatch, stub_decision(65))
-    client = FakeSupabase()
+def test_preflight_runs_before_scoring_and_skips_the_jev_call(persisting, monkeypatch):
+    calls = patch_jev(monkeypatch, stub_decision(88))
+    crm = FakeCrm()
+    campaign = make_campaign()
 
-    leads = orchestrator.run_campaign(make_campaign(), client_factory=lambda: client)
+    orchestrator.run_campaign(campaign, crm=crm)
+    assert len(calls) == 1
+
+    # Second run: already ingested, so nothing should be scored again.
+    orchestrator.run_campaign(campaign, crm=crm)
+    assert len(calls) == 1, "re-scored a lead the CRM had already ingested"
+    assert len(crm.ingest_calls) == 1
+
+
+def test_rerun_reports_the_lead_as_persisted(persisting, monkeypatch):
+    patch_jev(monkeypatch, stub_decision(88))
+    crm = FakeCrm()
+    campaign = make_campaign()
+
+    orchestrator.run_campaign(campaign, crm=crm)
+    leads = orchestrator.run_campaign(campaign, crm=crm)
+
+    assert [lead.status for lead in leads] == [STATUS_PERSISTED]
+
+
+def test_external_key_is_stable_for_the_same_college():
+    a = orchestrator.external_key({"college_name": "Vasavi College of Engineering"})
+    b = orchestrator.external_key({"college_name": "  vasavi college of ENGINEERING "})
+    assert a == b
+
+
+def test_lead_below_threshold_is_never_sent_to_the_crm(persisting, monkeypatch):
+    patch_jev(monkeypatch, stub_decision(65))
+    crm = FakeCrm()
+
+    leads = orchestrator.run_campaign(make_campaign(), crm=crm)
 
     assert leads[0].status == STATUS_SKIPPED
-    assert client.writes == []
+    assert crm.ingest_calls == []
 
 
-def test_threshold_is_per_campaign_not_global(persisting, monkeypatch):
+def test_threshold_is_per_campaign(persisting, monkeypatch):
     patch_jev(monkeypatch, stub_decision(65))
-    client = FakeSupabase()
+    crm = FakeCrm()
 
-    leads = orchestrator.run_campaign(
-        make_campaign(min_fit_score=60.0), client_factory=lambda: client
-    )
+    leads = orchestrator.run_campaign(make_campaign(min_fit_score=60.0), crm=crm)
 
     assert leads[0].status == STATUS_PERSISTED
 
 
 def test_send_now_false_blocks_a_high_score(persisting, monkeypatch):
     patch_jev(monkeypatch, stub_decision(95, send=False))
-    client = FakeSupabase()
+    crm = FakeCrm()
 
-    leads = orchestrator.run_campaign(make_campaign(), client_factory=lambda: client)
-
-    assert leads[0].status == STATUS_SKIPPED
-    assert client.writes == []
-
-
-def test_reject_label_blocks_a_high_score(persisting, monkeypatch):
-    patch_jev(monkeypatch, stub_decision(95, label="reject"))
-    client = FakeSupabase()
-
-    leads = orchestrator.run_campaign(make_campaign(), client_factory=lambda: client)
+    leads = orchestrator.run_campaign(make_campaign(), crm=crm)
 
     assert leads[0].status == STATUS_SKIPPED
-
-
-def test_existing_college_is_reused_not_duplicated(persisting, monkeypatch):
-    patch_jev(monkeypatch, stub_decision(88))
-    client = FakeSupabase()
-
-    orchestrator.run_campaign(make_campaign(), client_factory=lambda: client)
-    orchestrator.run_campaign(make_campaign(), client_factory=lambda: client)
-
-    assert len(client.rows["colleges"]) == 1
-    assert len(client.rows["opportunities"]) == 2
+    assert crm.ingest_calls == []
 
 
 def test_scoring_failure_is_recorded_on_the_lead_not_raised(persisting, monkeypatch):
@@ -126,43 +141,43 @@ def test_scoring_failure_is_recorded_on_the_lead_not_raised(persisting, monkeypa
         raise JevError("Jev unreachable after 3 attempts")
 
     monkeypatch.setattr("agents.scoring_agent.call_jev", boom)
-    client = FakeSupabase()
+    crm = FakeCrm()
 
-    leads = orchestrator.run_campaign(make_campaign(), client_factory=lambda: client)
+    leads = orchestrator.run_campaign(make_campaign(), crm=crm)
 
     assert leads[0].status == STATUS_FAILED
     assert "unreachable" in leads[0].error
-    assert client.writes == []
+    assert crm.ingest_calls == []
 
 
-def test_persistence_failure_keeps_the_score(persisting, monkeypatch):
+def test_ingest_failure_keeps_the_score(persisting, monkeypatch):
     patch_jev(monkeypatch, stub_decision(88))
-    client = FakeSupabase(fail_on={"opportunities"})
+    crm = FakeCrm(fail_ingest=True)
 
-    leads = orchestrator.run_campaign(make_campaign(), client_factory=lambda: client)
+    leads = orchestrator.run_campaign(make_campaign(), crm=crm)
 
     assert leads[0].status == STATUS_FAILED
     assert leads[0].fit_score == 88  # the paid-for judgement is not discarded
-    assert "opportunities" in leads[0].error
 
 
-def test_runs_without_supabase_configured(monkeypatch):
+def test_preflight_failure_degrades_to_scoring_everything(persisting, monkeypatch):
+    calls = patch_jev(monkeypatch, stub_decision(88))
+    crm = FakeCrm(fail_preflight=True)
+
+    leads = orchestrator.run_campaign(make_campaign(), crm=crm)
+
+    assert len(calls) == 1
+    assert leads[0].status == STATUS_PERSISTED
+
+
+def test_runs_without_crm_configured(monkeypatch):
     monkeypatch.setenv("TYPESAFE_API_KEY", "test-key")
     get_settings.cache_clear()
     patch_jev(monkeypatch, stub_decision(88))
+    crm = FakeCrm()
 
-    leads = orchestrator.run_campaign(make_campaign())
+    leads = orchestrator.run_campaign(make_campaign(), crm=crm)
 
     assert leads[0].status == STATUS_SCORED
+    assert crm.ingest_calls == []
     assert leads[0].college_id is None
-
-
-def test_unreachable_database_degrades_to_scoring_only(persisting, monkeypatch):
-    patch_jev(monkeypatch, stub_decision(88))
-
-    def broken_factory():
-        raise RuntimeError("connection refused")
-
-    leads = orchestrator.run_campaign(make_campaign(), client_factory=broken_factory)
-
-    assert leads[0].status == STATUS_SCORED

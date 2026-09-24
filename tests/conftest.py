@@ -14,7 +14,8 @@ def clean_settings(monkeypatch):
     """Settings are cached for the process; each test gets its own view."""
     for key in (
         "TYPESAFE_API_KEY", "JEV_API_URL", "JEV_TIMEOUT_SECONDS", "JEV_MAX_ATTEMPTS",
-        "SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "MIN_FIT_SCORE",
+        "SUPABASE_URL", "SUPABASE_ANON_KEY", "SUPABASE_JWT_SECRET",
+        "CRM_ROLE", "CRM_TOKEN_TTL_SECONDS", "MIN_FIT_SCORE",
     ):
         monkeypatch.delenv(key, raising=False)
     get_settings.cache_clear()

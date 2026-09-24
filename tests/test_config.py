@@ -16,12 +16,20 @@ def test_require_jev_raises_only_when_used():
         get_settings().require_jev()
 
 
-def test_persistence_needs_both_url_and_key(monkeypatch):
+def test_persistence_needs_url_anon_key_and_jwt_secret(monkeypatch):
     monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
     get_settings.cache_clear()
     assert get_settings().persistence_enabled is False
-    with pytest.raises(ConfigError, match="SUPABASE_SERVICE_ROLE_KEY"):
-        get_settings().require_supabase()
+
+    with pytest.raises(ConfigError) as exc:
+        get_settings().require_crm()
+    # Names every missing setting at once rather than one per attempt.
+    assert "SUPABASE_ANON_KEY" in str(exc.value)
+    assert "SUPABASE_JWT_SECRET" in str(exc.value)
+
+
+def test_crm_role_defaults_to_the_least_privileged_role():
+    assert get_settings().crm_role == "autogtm_writer"
 
 
 def test_non_numeric_threshold_is_rejected(monkeypatch):

@@ -19,5 +19,6 @@ async def health_check():
         "service": "campus-autogtm",
         "jev_configured": bool(settings.jev_api_key),
         "persistence_enabled": settings.persistence_enabled,
+        "crm_role": settings.crm_role,
         "min_fit_score": settings.min_fit_score,
     }

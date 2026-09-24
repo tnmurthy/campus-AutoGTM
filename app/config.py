@@ -13,6 +13,8 @@ DEFAULT_JEV_API_URL = "https://api.typesafe.ai/v1/systemone"
 DEFAULT_MIN_FIT_SCORE = 70.0
 DEFAULT_JEV_TIMEOUT_SECONDS = 15.0
 DEFAULT_JEV_MAX_ATTEMPTS = 3
+DEFAULT_CRM_ROLE = "autogtm_writer"
+DEFAULT_CRM_TOKEN_TTL = 300
 
 
 class ConfigError(RuntimeError):
@@ -26,7 +28,10 @@ class Settings:
     jev_timeout_seconds: float
     jev_max_attempts: int
     supabase_url: str | None
-    supabase_service_key: str | None
+    supabase_anon_key: str | None
+    supabase_jwt_secret: str | None
+    crm_role: str
+    crm_token_ttl_seconds: int
     min_fit_score: float
 
     def require_jev(self) -> str:
@@ -34,17 +39,38 @@ class Settings:
             raise ConfigError("TYPESAFE_API_KEY is not set")
         return self.jev_api_key
 
-    def require_supabase(self) -> tuple[str, str]:
-        if not self.supabase_url or not self.supabase_service_key:
-            raise ConfigError(
-                "SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must both be set "
-                "to persist leads",
+    def require_crm(self) -> tuple[str, str, str]:
+        """URL, anon key and JWT secret, or explain what is missing.
+
+        Deliberately not the service role key. That credential bypasses row
+        level security on every table; this service needs exactly two
+        functions. It signs a short-lived token for the autogtm_writer role
+        instead, which can reach nothing else.
+        """
+        missing = [
+            name
+            for name, value in (
+                ("SUPABASE_URL", self.supabase_url),
+                ("SUPABASE_ANON_KEY", self.supabase_anon_key),
+                ("SUPABASE_JWT_SECRET", self.supabase_jwt_secret),
             )
-        return self.supabase_url, self.supabase_service_key
+            if not value
+        ]
+        if missing:
+            raise ConfigError(
+                f"{', '.join(missing)} must be set to persist leads",
+            )
+        return (
+            self.supabase_url,  # type: ignore[return-value]
+            self.supabase_anon_key,  # type: ignore[return-value]
+            self.supabase_jwt_secret,  # type: ignore[return-value]
+        )
 
     @property
     def persistence_enabled(self) -> bool:
-        return bool(self.supabase_url and self.supabase_service_key)
+        return bool(
+            self.supabase_url and self.supabase_anon_key and self.supabase_jwt_secret
+        )
 
 
 def _float(name: str, fallback: float) -> float:
@@ -75,6 +101,9 @@ def get_settings() -> Settings:
         jev_timeout_seconds=_float("JEV_TIMEOUT_SECONDS", DEFAULT_JEV_TIMEOUT_SECONDS),
         jev_max_attempts=_int("JEV_MAX_ATTEMPTS", DEFAULT_JEV_MAX_ATTEMPTS),
         supabase_url=os.environ.get("SUPABASE_URL"),
-        supabase_service_key=os.environ.get("SUPABASE_SERVICE_ROLE_KEY"),
+        supabase_anon_key=os.environ.get("SUPABASE_ANON_KEY"),
+        supabase_jwt_secret=os.environ.get("SUPABASE_JWT_SECRET"),
+        crm_role=os.environ.get("CRM_ROLE", DEFAULT_CRM_ROLE),
+        crm_token_ttl_seconds=_int("CRM_TOKEN_TTL_SECONDS", DEFAULT_CRM_TOKEN_TTL),
         min_fit_score=_float("MIN_FIT_SCORE", DEFAULT_MIN_FIT_SCORE),
     )

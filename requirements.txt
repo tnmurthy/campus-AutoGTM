@@ -5,7 +5,7 @@ fastapi==0.141.1
 uvicorn[standard]==0.34.0
 requests==2.32.3
 pydantic==2.13.4
-supabase==2.5.1
+PyJWT==2.12.1
 
 # Tests
 pytest==8.2.0
