@@ -75,7 +75,7 @@ def score_lead_with_jev(
     # paid-training push do not qualify a college the same way.
     qualifies = send_now and fit_label != "reject" and fit_score >= min_fit_score
 
-    lead = state["lead"]
+    lead = state.get("college") or state.get("lead", {})
     return LeadRead(
         id=lead_id,
         college_name=lead["college_name"],

@@ -63,6 +63,22 @@ def run_campaign(campaign: CampaignRead, crm: Any = crm_client) -> list[LeadRead
 
     known_keys = _already_ingested(crm, ref, keyed) if settings.persistence_enabled else set()
 
+    # Enrich only what will actually be scored. Enrichment is the one stage
+    # that touches someone else's servers, so a college already ingested for
+    # this campaign is neither crawled nor judged.
+    to_score = [(k, raw) for k, raw in keyed if k not in known_keys]
+    if settings.enrichment_enabled and to_score:
+        from agents.enrichment.enricher import enrich_all
+
+        enriched = enrich_all(
+            [raw for _, raw in to_score],
+            cache_dir=settings.enrichment_cache_dir,
+            timeout=settings.enrichment_timeout_seconds,
+            max_pages=settings.enrichment_max_pages,
+        )
+        by_key = {k: e for (k, _), e in zip(to_score, enriched)}
+        keyed = [(k, by_key.get(k, raw)) for k, raw in keyed]
+
     results: list[LeadRead] = []
     pending: list[tuple[int, dict[str, Any], LeadRead]] = []
 

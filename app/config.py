@@ -16,6 +16,9 @@ DEFAULT_JEV_MAX_ATTEMPTS = 3
 DEFAULT_CRM_ROLE = "autogtm_writer"
 DEFAULT_CRM_TOKEN_TTL = 300
 DEFAULT_PROSPECTOR_SOURCE = "stub"
+DEFAULT_ENRICHMENT_CACHE = ".cache/enrichment"
+DEFAULT_ENRICHMENT_TIMEOUT = 15.0
+DEFAULT_ENRICHMENT_MAX_PAGES = 4
 PROSPECTOR_SOURCES = ("file", "datagov", "stub")
 
 
@@ -36,6 +39,10 @@ class Settings:
     crm_token_ttl_seconds: int
     prospector_source: str
     prospector_file: str | None
+    enrichment_enabled: bool
+    enrichment_cache_dir: str
+    enrichment_timeout_seconds: float
+    enrichment_max_pages: int
     datagov_resource_id: str | None
     datagov_api_key: str | None
     min_fit_score: float
@@ -122,6 +129,13 @@ def _int(name: str, fallback: int) -> int:
         raise ConfigError(f"{name} must be an integer, got {raw!r}") from exc
 
 
+def _flag(name: str, fallback: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return fallback
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
 def _choice(name: str, fallback: str, allowed: tuple[str, ...]) -> str:
     value = (os.environ.get(name) or fallback).strip().lower()
     if value not in allowed:
@@ -143,6 +157,10 @@ def get_settings() -> Settings:
         crm_token_ttl_seconds=_int("CRM_TOKEN_TTL_SECONDS", DEFAULT_CRM_TOKEN_TTL),
         prospector_source=_choice("PROSPECTOR_SOURCE", DEFAULT_PROSPECTOR_SOURCE, PROSPECTOR_SOURCES),
         prospector_file=os.environ.get("PROSPECTOR_FILE"),
+        enrichment_enabled=_flag("ENRICHMENT_ENABLED", False),
+        enrichment_cache_dir=os.environ.get("ENRICHMENT_CACHE_DIR", DEFAULT_ENRICHMENT_CACHE),
+        enrichment_timeout_seconds=_float("ENRICHMENT_TIMEOUT_SECONDS", DEFAULT_ENRICHMENT_TIMEOUT),
+        enrichment_max_pages=_int("ENRICHMENT_MAX_PAGES", DEFAULT_ENRICHMENT_MAX_PAGES),
         datagov_resource_id=os.environ.get("DATAGOV_RESOURCE_ID"),
         datagov_api_key=os.environ.get("DATAGOV_API_KEY"),
         min_fit_score=_float("MIN_FIT_SCORE", DEFAULT_MIN_FIT_SCORE),

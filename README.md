@@ -7,7 +7,7 @@ into the BrainOpsHub CRM database.
 ## Pipeline
 
 ```
-Campaign -> Prospector -> preflight -> Jev Scoring -> threshold -> ingest_lead()
+Campaign -> Prospector -> preflight -> Enrichment -> Jev Scoring -> threshold -> ingest_lead()
                           (skip what   (only the      (campaign     one atomic,
                            the CRM      unseen)        min_fit_      idempotent
                            already has)                score)        batch)
@@ -29,6 +29,7 @@ Jev fit score, and `notes` carrying the model's one-line rationale.
 | Qualification threshold | Working, per campaign |
 | Persistence to BrainOpsHub | Working — atomic, idempotent, least privilege |
 | Preflight deduplication | Working |
+| Website enrichment | Working — robots-aware, cached, opt-in |
 | Win/loss feedback -> ICP recalibration | Not built |
 
 Campaign targeting is applied at discovery: `segment_states`, `college_types`
@@ -81,6 +82,7 @@ curl -X POST localhost:8000/campaigns/1/run
 | `SUPABASE_JWT_SECRET` | to persist | Signs a short-lived `autogtm_writer` token |
 | `CRM_ROLE` | no | Defaults to `autogtm_writer` |
 | `PROSPECTOR_SOURCE` | no | `file`, `datagov` or `stub` (default) |
+| `ENRICHMENT_ENABLED` | no | Crawl college sites for evidence before scoring (default off) |
 | `PROSPECTOR_FILE` | for `file` | Path to a CSV/JSON college roster |
 | `DATAGOV_RESOURCE_ID` / `DATAGOV_API_KEY` | for `datagov` | data.gov.in resource |
 | `MIN_FIT_SCORE` | no | Default qualification threshold (70) |
@@ -100,6 +102,17 @@ key, and never log the service role key.
   the run continues. Scores already paid for are never discarded.
 - **Transport retries, shape does not.** 429/5xx back off and retry; a 4xx or
   an unrecognised body fails immediately.
+- **Enrichment decides the score, not the model.** Judged on roster metadata
+  alone a real college scored 32/100 against a 70 threshold; with placement,
+  event and department evidence crawled from its own site, the same college,
+  same questions and same threshold scored 96.5 and qualified. The score levels
+  ask about a training cell and event history, so without that evidence nothing
+  can ever reach them.
+- **The crawl is polite.** robots.txt and Crawl-delay are honoured, the agent
+  identifies itself, downloads are capped, and pages are cached for a week.
+  Enrichment runs after preflight, so a college already ingested is never
+  crawled.
+
 - **No service role key.** This service signs a short-lived token for
   `autogtm_writer`, which can execute two functions and read no table. A bug
   here cannot reach payouts, contacts or anything else.
@@ -115,4 +128,4 @@ key, and never log the service role key.
 python -m pytest tests -q
 ```
 
-51 tests, no credentials and no database required.
+69 tests, no credentials and no database required.
