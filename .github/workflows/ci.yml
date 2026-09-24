@@ -11,6 +11,10 @@ concurrency:
   group: autogtm-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+  issues: write
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -31,3 +35,35 @@ jobs:
       # on a host that is not configured yet.
       - name: Tests
         run: python -m pytest tests -q
+
+      # A red run went unnoticed for hours because nothing announced it.
+      # One reusable issue rather than one per failure: a new issue on every
+      # push is noise that gets muted, and a muted alarm is the same as none.
+      - name: Announce a broken build
+        if: failure() && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          body="Run: $RUN_URL -- commit $SHA. Reused for every failure on main, closed automatically when green."
+          existing=$(gh issue list --state open --label ci-failure --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh label create ci-failure --color B60205 --description "Main branch CI is red" || true
+            gh issue create --title "CI is failing on main" --label ci-failure --body "$body"
+          fi
+
+      - name: Close the broken-build issue
+        if: success() && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          existing=$(gh issue list --state open --label ci-failure --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue close "$existing" --comment "Green again: $RUN_URL"
+          fi
