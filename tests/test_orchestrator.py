@@ -198,6 +198,23 @@ class TestEvidenceGate:
             lambda leads, cache_dir, timeout, max_pages: list(leads),
         )
 
+    def test_thin_evidence_is_held_like_no_evidence(self, enriching, monkeypatch):
+        # 50 characters produced the top score of a real slice; the gate is a
+        # volume threshold, not a presence check.
+        patch_jev(monkeypatch, stub_decision(4.0))
+        crm = FakeCrm()
+        monkeypatch.setattr(
+            "agents.enrichment.enricher.enrich_all",
+            lambda leads, cache_dir, timeout, max_pages: [
+                {**l, "evidence": {"scale": ["Autonomous institution."]}} for l in leads
+            ],
+        )
+
+        leads = orchestrator.run_campaign(make_campaign(), crm=crm)
+
+        assert leads[0].status == "needs_evidence"
+        assert crm.ingest_calls == []
+
     def test_a_high_score_with_no_evidence_is_held_not_persisted(
         self, enriching, monkeypatch
     ):
@@ -215,8 +232,12 @@ class TestEvidenceGate:
         crm = FakeCrm()
         monkeypatch.setattr(
             "agents.enrichment.enricher.enrich_all",
+            # Realistic volume: the gate is a character threshold, and a
+            # one-line excerpt is exactly the thin evidence it exists to catch.
             lambda leads, cache_dir, timeout, max_pages: [
-                {**l, "evidence": {"placement": ["An active placement cell."]}} for l in leads
+                {**l, "evidence": {"placement": ["An active training and placement cell. " * 12],
+                                   "events": ["Hosted a national hackathon last year. " * 6]}}
+                for l in leads
             ],
         )
 

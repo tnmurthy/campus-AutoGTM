@@ -173,3 +173,20 @@ class TestFetcherPoliteness:
 
         monkeypatch.setattr("agents.enrichment.fetcher.requests.get", lambda *a, **k: R())
         assert f.allowed("https://norobots.example/anything") is True
+
+
+class TestEvidenceVolumeGate:
+    """Thin evidence is as unreliable as none, and must not auto-qualify."""
+
+    def test_counts_characters_across_all_topics(self):
+        from agents.scoring_agent import _evidence_volume
+
+        assert _evidence_volume({"placement": ["abcde"], "events": ["fg"]}) == 7
+        assert _evidence_volume(None) == 0
+        assert _evidence_volume({}) == 0
+
+    def test_threshold_sits_above_the_observed_unstable_band(self):
+        from agents.scoring_agent import MIN_EVIDENCE_CHARS
+
+        # Observed: 50 chars -> 98.8, 72 chars -> 49.5; >=1179 chars was stable.
+        assert 72 < MIN_EVIDENCE_CHARS <= 1179

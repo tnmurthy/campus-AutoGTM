@@ -30,6 +30,13 @@ FIT_LEVELS = [
 
 SEND_NOW_THRESHOLD = 0.5
 
+# Below this much crawled text the score is not reproducible. In one
+# calibration slice, 50 characters of evidence produced the highest score of
+# the run (98.8) and 72 characters produced nearly the lowest (49.5), while
+# every college above 1,000 characters landed in a tight, sensible band. A
+# boolean "has any evidence" gate let both through.
+MIN_EVIDENCE_CHARS = 400
+
 QUESTIONS: dict[str, Any] = {
     "fit_label": {
         "type": "choice",
@@ -78,7 +85,7 @@ def score_lead_with_jev(
     # Whether the judgement rests on crawled evidence or only on the roster row
     # is reported, not acted on: only the caller knows if enrichment was even
     # attempted, and with it switched off every lead would otherwise be held.
-    has_evidence = bool(state.get("website_evidence"))
+    has_evidence = _evidence_volume(state.get("website_evidence")) >= MIN_EVIDENCE_CHARS
     status = STATUS_SCORED if qualifies else STATUS_SKIPPED
 
     lead = state.get("college") or state.get("lead", {})
@@ -97,6 +104,13 @@ def score_lead_with_jev(
     )
 
 
+def _evidence_volume(evidence: Any) -> int:
+    """Total characters of crawled text backing this judgement."""
+    if not isinstance(evidence, dict):
+        return 0
+    return sum(len(str(x)) for hits in evidence.values() for x in hits)
+
+
 def _to_percentage(raw: float) -> float:
     """Map a position along FIT_LEVELS onto 0-100.
 
@@ -112,7 +126,7 @@ def _to_percentage(raw: float) -> float:
 
 def _rationale(fit_label: str, fit_score: float, send_now: float, has_evidence: bool = True) -> str:
     """Composed here because there is no free-text primitive to ask for it."""
-    basis = "" if has_evidence else " No website evidence: judged on roster data only."
+    basis = "" if has_evidence else " Insufficient website evidence: judged largely on roster data."
     return (
         f"Jev: {str(fit_label).replace('_', ' ')}, fit {fit_score:.0f}/100, "
         f"send-now confidence {send_now:.0%}.{basis}"
