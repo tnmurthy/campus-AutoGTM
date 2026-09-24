@@ -1,8 +1,9 @@
 name: CI
 
 on:
+  # Every branch: a push with no open PR must still be tested.
   push:
-    branches: [main]
+    branches: ['**']
   pull_request:
   workflow_dispatch:
 
