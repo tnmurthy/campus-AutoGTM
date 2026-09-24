@@ -185,10 +185,13 @@ def _ingest(
 
 
 def _signals_note(raw: dict[str, Any]) -> str | None:
-    signals = raw.get("signals")
-    if not signals:
-        return None
-    return "Discovery signals: " + "; ".join(str(s) for s in signals)
+    """What the CRM records about where this college came from."""
+    parts: list[str] = []
+    if raw.get("notes"):
+        parts.append(str(raw["notes"]))
+    if raw.get("signals"):
+        parts.append("Signals: " + "; ".join(str(s) for s in raw["signals"]))
+    return " | ".join(parts) or None
 
 
 __all__ = ["run_campaign", "campaign_ref", "external_key", "STATUS_SKIPPED"]

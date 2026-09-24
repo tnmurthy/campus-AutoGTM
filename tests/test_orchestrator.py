@@ -10,7 +10,7 @@ from app.schemas.lead import (
 )
 from app.services import orchestrator
 from app.services.jev_client import JevError
-from tests.fakes import FakeCrm
+from tests.fakes import FakeCrm, jev_response, percentage_for
 
 
 def make_campaign(**overrides) -> CampaignRead:
@@ -29,13 +29,9 @@ def make_campaign(**overrides) -> CampaignRead:
     return CampaignRead(**base)
 
 
-def stub_decision(score: float, label="strong_fit", send=True):
-    return {
-        "fit_label": {"value": label},
-        "fit_score": {"value": score},
-        "send_now": {"value": send},
-        "rationale": {"value": "Active T&P cell and recent hackathon."},
-    }
+def stub_decision(level: float, label="strong_fit", send=True):
+    """`level` is a score position (0-4), not a percentage. See tests.fakes."""
+    return jev_response(fit_label=label, level=level, send_now=0.9 if send else 0.1)
 
 
 @pytest.fixture
@@ -59,7 +55,7 @@ def patch_jev(monkeypatch, decision):
 
 
 def test_qualifying_lead_is_ingested_in_one_batched_call(persisting, monkeypatch):
-    patch_jev(monkeypatch, stub_decision(88))
+    patch_jev(monkeypatch, stub_decision(4.0))
     crm = FakeCrm()
 
     leads = orchestrator.run_campaign(make_campaign(), crm=crm)
@@ -69,7 +65,7 @@ def test_qualifying_lead_is_ingested_in_one_batched_call(persisting, monkeypatch
 
     sent = crm.ingest_calls[0][0]
     assert sent["opportunity_type"] == "hackathon"
-    assert sent["fit_score"] == 88
+    assert sent["fit_score"] == percentage_for(4.0) == 100.0
     assert sent["campaign_ref"] == "campaign-1"
     # Stage and source are the database's to set, never sent from here.
     assert "stage" not in sent and "source" not in sent
@@ -77,7 +73,7 @@ def test_qualifying_lead_is_ingested_in_one_batched_call(persisting, monkeypatch
 
 
 def test_preflight_runs_before_scoring_and_skips_the_jev_call(persisting, monkeypatch):
-    calls = patch_jev(monkeypatch, stub_decision(88))
+    calls = patch_jev(monkeypatch, stub_decision(4.0))
     crm = FakeCrm()
     campaign = make_campaign()
 
@@ -91,7 +87,7 @@ def test_preflight_runs_before_scoring_and_skips_the_jev_call(persisting, monkey
 
 
 def test_rerun_reports_the_lead_as_persisted(persisting, monkeypatch):
-    patch_jev(monkeypatch, stub_decision(88))
+    patch_jev(monkeypatch, stub_decision(4.0))
     crm = FakeCrm()
     campaign = make_campaign()
 
@@ -108,7 +104,7 @@ def test_external_key_is_stable_for_the_same_college():
 
 
 def test_lead_below_threshold_is_never_sent_to_the_crm(persisting, monkeypatch):
-    patch_jev(monkeypatch, stub_decision(65))
+    patch_jev(monkeypatch, stub_decision(2.0))
     crm = FakeCrm()
 
     leads = orchestrator.run_campaign(make_campaign(), crm=crm)
@@ -118,16 +114,18 @@ def test_lead_below_threshold_is_never_sent_to_the_crm(persisting, monkeypatch):
 
 
 def test_threshold_is_per_campaign(persisting, monkeypatch):
-    patch_jev(monkeypatch, stub_decision(65))
+    # Level 2 of 4 normalises to 50, which clears a 40 threshold but not 70.
+    patch_jev(monkeypatch, stub_decision(2.0))
     crm = FakeCrm()
 
-    leads = orchestrator.run_campaign(make_campaign(min_fit_score=60.0), crm=crm)
+    assert percentage_for(2.0) == 50.0
+    leads = orchestrator.run_campaign(make_campaign(min_fit_score=40.0), crm=crm)
 
     assert leads[0].status == STATUS_PERSISTED
 
 
 def test_send_now_false_blocks_a_high_score(persisting, monkeypatch):
-    patch_jev(monkeypatch, stub_decision(95, send=False))
+    patch_jev(monkeypatch, stub_decision(4.0, send=False))
     crm = FakeCrm()
 
     leads = orchestrator.run_campaign(make_campaign(), crm=crm)
@@ -151,17 +149,17 @@ def test_scoring_failure_is_recorded_on_the_lead_not_raised(persisting, monkeypa
 
 
 def test_ingest_failure_keeps_the_score(persisting, monkeypatch):
-    patch_jev(monkeypatch, stub_decision(88))
+    patch_jev(monkeypatch, stub_decision(4.0))
     crm = FakeCrm(fail_ingest=True)
 
     leads = orchestrator.run_campaign(make_campaign(), crm=crm)
 
     assert leads[0].status == STATUS_FAILED
-    assert leads[0].fit_score == 88  # the paid-for judgement is not discarded
+    assert leads[0].fit_score == 100.0  # the paid-for judgement is not discarded
 
 
 def test_preflight_failure_degrades_to_scoring_everything(persisting, monkeypatch):
-    calls = patch_jev(monkeypatch, stub_decision(88))
+    calls = patch_jev(monkeypatch, stub_decision(4.0))
     crm = FakeCrm(fail_preflight=True)
 
     leads = orchestrator.run_campaign(make_campaign(), crm=crm)
@@ -173,7 +171,7 @@ def test_preflight_failure_degrades_to_scoring_everything(persisting, monkeypatc
 def test_runs_without_crm_configured(monkeypatch):
     monkeypatch.setenv("TYPESAFE_API_KEY", "test-key")
     get_settings.cache_clear()
-    patch_jev(monkeypatch, stub_decision(88))
+    patch_jev(monkeypatch, stub_decision(4.0))
     crm = FakeCrm()
 
     leads = orchestrator.run_campaign(make_campaign(), crm=crm)

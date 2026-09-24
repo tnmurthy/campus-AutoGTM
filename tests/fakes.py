@@ -75,3 +75,50 @@ class FakeCrm:
             self.ledger[slot] = row
             results.append({**row, "college_created": college_created, "created": True})
         return results
+
+
+# ---------------------------------------------------------------------------
+# Jev responses
+#
+# Defined once. The previous fakes invented a flat {"key": {"value": ...}}
+# shape; the real API nests under `answers` and names each result after its
+# primitive. Every test passed against the invented shape, so nothing caught
+# that the integration could not work. One definition, matching the documented
+# contract, is the guard against repeating that.
+# ---------------------------------------------------------------------------
+
+FIT_LEVEL_COUNT = 5  # mirrors agents.scoring_agent.FIT_LEVELS
+
+
+def jev_response(
+    fit_label: str = "strong_fit",
+    level: float = 4.0,
+    send_now: float = 0.9,
+) -> dict[str, Any]:
+    """A response envelope shaped exactly as docs.typesafe.ai/api documents.
+
+    `level` is a position along the score criteria (0 .. FIT_LEVEL_COUNT-1),
+    not a percentage -- that distinction is what the old fakes hid.
+    """
+    return {
+        "model": "jev-1.13.0",
+        "answers": {
+            "fit_label": {
+                "choice": fit_label,
+                "probabilities": {fit_label: 0.8},
+                "confidence": 0.8,
+            },
+            "fit_score": {
+                "score": level,
+                "probabilities": [0.0] * FIT_LEVEL_COUNT,
+                "confidence": 0.75,
+            },
+            "send_now": {"noul": send_now},
+        },
+        "usage": {"input_tokens": 300, "output_tokens": 20},
+    }
+
+
+def percentage_for(level: float) -> float:
+    """What scoring_agent will report for a given score level."""
+    return round(level / (FIT_LEVEL_COUNT - 1) * 100, 1)

@@ -69,13 +69,31 @@ def _parse(resp: "requests.Response") -> dict[str, Any]:
     return body
 
 
-def answer(decision: dict[str, Any], key: str) -> Any:
-    """Pull one question's value, naming the key when the shape is wrong.
+def answers(body: dict[str, Any]) -> dict[str, Any]:
+    """The `answers` map from a response envelope.
 
-    Indexing the raw response inline turns any upstream change into a bare
-    KeyError and a 500 with no indication of which field moved.
+    The API returns {"model": ..., "answers": {...}, "usage": {...}}; the
+    judgements are nested, not top level.
     """
-    slot = decision.get(key)
-    if not isinstance(slot, dict) or "value" not in slot:
-        raise JevError(f"Jev response has no usable {key!r} answer")
-    return slot["value"]
+    slot = body.get("answers")
+    if not isinstance(slot, dict):
+        raise JevError("Jev response has no answers object")
+    return slot
+
+
+def value(answers_map: dict[str, Any], key: str, primitive: str) -> Any:
+    """One judgement, read under its primitive's own field name.
+
+    Each primitive names its result after itself -- a choice answer carries
+    `choice`, a score `score`, a noul `noul`. Indexing inline turns any
+    upstream change into a bare KeyError with no indication of what moved.
+    """
+    slot = answers_map.get(key)
+    if not isinstance(slot, dict):
+        raise JevError(f"Jev returned no {key!r} answer")
+    if primitive not in slot:
+        raise JevError(
+            f"Jev {key!r} answer has no {primitive!r} field "
+            f"(got {', '.join(sorted(slot)) or 'nothing'})"
+        )
+    return slot[primitive]

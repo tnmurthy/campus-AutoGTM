@@ -2,7 +2,7 @@ import pytest
 
 from app.config import get_settings
 from app.services import jev_client
-from app.services.jev_client import JevError, answer
+from app.services.jev_client import JevError, answers, value
 
 
 class StubResponse:
@@ -32,10 +32,11 @@ def test_retries_then_succeeds_on_transient_error(configured, monkeypatch):
         calls.append(1)
         if len(calls) < 3:
             return StubResponse(503)
-        return StubResponse(200, {"fit_score": {"value": 81}})
+        return StubResponse(200, {"answers": {"fit_score": {"score": 3.0}}})
 
     monkeypatch.setattr(jev_client.requests, "post", fake_post)
-    assert jev_client.call_jev({}, {})["fit_score"]["value"] == 81
+    body = jev_client.call_jev({}, {})
+    assert value(answers(body), "fit_score", "score") == 3.0
     assert len(calls) == 3
 
 
@@ -67,6 +68,17 @@ def test_non_json_body_is_reported_clearly(configured, monkeypatch):
         jev_client.call_jev({}, {})
 
 
-def test_answer_names_the_missing_field():
+def test_answers_rejects_a_response_with_no_envelope():
+    with pytest.raises(JevError, match="no answers object"):
+        answers({"model": "jev-1.13.0"})
+
+
+def test_value_names_the_missing_question():
     with pytest.raises(JevError, match="fit_label"):
-        answer({"fit_score": {"value": 10}}, "fit_label")
+        value({"fit_score": {"score": 1.0}}, "fit_label", "choice")
+
+
+def test_value_names_the_missing_primitive_field():
+    # A choice answer read as if it were a noul must say so, not KeyError.
+    with pytest.raises(JevError, match="noul"):
+        value({"send_now": {"choice": "yes"}}, "send_now", "noul")

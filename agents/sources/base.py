@@ -15,8 +15,10 @@ LEAD_FIELDS = (
     "college_type",
     "city",
     "state",
+    "segment",
     "website",
     "departments",
+    "notes",
     "signals",
     "contact_name",
     "contact_role",
@@ -44,8 +46,15 @@ def normalise(record: dict[str, Any]) -> dict[str, Any] | None:
         "college_type": _clean(record.get("college_type")),
         "city": _clean(record.get("city")),
         "state": _clean(record.get("state")),
+        # Tier 1/2/3 is real quality signal already in the roster and was
+        # being dropped, leaving the model to judge on name and city alone.
+        "segment": _clean(record.get("segment")),
         "website": _clean(record.get("website")),
         "departments": _as_list(record.get("departments")),
+        # Prose, kept whole. Comma-splitting a note like "Bachupally,
+        # Hyderabad. Autonomous NIRF-ranked institution" produced two
+        # meaningless fragments and cost the model its best evidence.
+        "notes": _clean(record.get("notes")),
         "signals": _as_list(record.get("signals")),
         "contact_name": _clean(record.get("contact_name")),
         "contact_role": _clean(record.get("contact_role")),

@@ -66,14 +66,11 @@ def _payload(**overrides):
 def test_run_endpoint_executes_the_pipeline_off_the_event_loop(client, monkeypatch):
     # Exercises the threadpool hand-off in the run route, which the unit tests
     # bypass by calling run_campaign directly.
+    from tests.fakes import jev_response
+
     monkeypatch.setattr(
         "agents.scoring_agent.call_jev",
-        lambda state, questions: {
-            "fit_label": {"value": "strong_fit"},
-            "fit_score": {"value": 91},
-            "send_now": {"value": True},
-            "rationale": {"value": "Strong CSE cohort."},
-        },
+        lambda state, questions: jev_response(level=4.0),
     )
     # Targeting that matches the stub lead; this test is about the threadpool
     # hand-off, not about the prospector's campaign filter.
@@ -85,6 +82,6 @@ def test_run_endpoint_executes_the_pipeline_off_the_event_loop(client, monkeypat
     leads = client.post(f"/campaigns/{campaign_id}/run").json()
 
     assert len(leads) == 1
-    assert leads[0]["fit_score"] == 91
+    assert leads[0]["fit_score"] == 100.0
     assert leads[0]["status"] == "scored"  # no Supabase configured in this fixture
     assert client.get("/leads/").json()[0]["college_name"] == leads[0]["college_name"]
