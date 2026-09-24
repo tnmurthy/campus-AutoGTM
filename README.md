@@ -7,11 +7,14 @@ into the BrainOpsHub CRM database.
 ## Pipeline
 
 ```
-Campaign  ->  Prospector  ->  ICP state  ->  Jev Scoring  ->  threshold  ->  Postgres
-                                            (fit 0-100,      (campaign      colleges
-                                             send_now,        min_fit_       contacts
-                                             rationale)       score)         opportunities
+Campaign -> Prospector -> preflight -> Jev Scoring -> threshold -> ingest_lead()
+                          (skip what   (only the      (campaign     one atomic,
+                           the CRM      unseen)        min_fit_      idempotent
+                           already has)                score)        batch)
 ```
+
+Preflight runs before scoring because Jev is the cost and the database is
+nearly free: re-running a campaign makes zero Jev calls.
 
 An opportunity is created at stage `enquiry`, with `probability` carrying the
 Jev fit score, and `notes` carrying the model's one-line rationale.
@@ -24,7 +27,8 @@ Jev fit score, and `notes` carrying the model's one-line rationale.
 | Prospector / signal discovery | **Stub** — returns one fixed fake lead; AICTE ingest not built |
 | Jev scoring | Working |
 | Qualification threshold | Working, per campaign |
-| Persistence to BrainOpsHub | Working |
+| Persistence to BrainOpsHub | Working — atomic, idempotent, least privilege |
+| Preflight deduplication | Working |
 | Win/loss feedback -> ICP recalibration | Not built |
 
 Replacing `agents/prospector_agent.discover_leads` is the only remaining work
@@ -62,7 +66,9 @@ curl -X POST localhost:8000/campaigns/1/run
 |---|---|---|
 | `TYPESAFE_API_KEY` | to score | Jev System One API key |
 | `SUPABASE_URL` | to persist | BrainOpsHub project URL |
-| `SUPABASE_SERVICE_ROLE_KEY` | to persist | **Bypasses RLS.** Server-side only |
+| `SUPABASE_ANON_KEY` | to persist | Sent as the `apikey` header |
+| `SUPABASE_JWT_SECRET` | to persist | Signs a short-lived `autogtm_writer` token |
+| `CRM_ROLE` | no | Defaults to `autogtm_writer` |
 | `MIN_FIT_SCORE` | no | Default qualification threshold (70) |
 | `JEV_API_URL` / `JEV_TIMEOUT_SECONDS` / `JEV_MAX_ATTEMPTS` | no | Transport tuning |
 
@@ -80,9 +86,12 @@ key, and never log the service role key.
   the run continues. Scores already paid for are never discarded.
 - **Transport retries, shape does not.** 429/5xx back off and retry; a 4xx or
   an unrecognised body fails immediately.
-- **Colleges are matched by name.** `colleges.name` has no unique constraint
-  upstream, so this is lookup-then-insert, not a true upsert. Run one worker
-  until `unique (colleges.name)` exists.
+- **No service role key.** This service signs a short-lived token for
+  `autogtm_writer`, which can execute two functions and read no table. A bug
+  here cannot reach payouts, contacts or anything else.
+- **The database owns the schema.** `ingest_lead()` is atomic per lead,
+  idempotent on `(campaign_ref, external_key)`, and fixes stage and source
+  itself: the agent may open a deal, never advance or disguise one.
 - **Campaigns live in memory.** They do not survive a restart and are not
   shared across workers. Single worker only, until they get a table.
 
@@ -92,4 +101,4 @@ key, and never log the service role key.
 python -m pytest tests -q
 ```
 
-25 tests, no credentials and no database required.
+36 tests, no credentials and no database required.
