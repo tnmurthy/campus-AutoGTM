@@ -11,6 +11,8 @@ from app.config import get_settings  # noqa: E402
 
 @pytest.fixture(autouse=True)
 def clean_settings(monkeypatch):
+    # An operator's Infra/.env must never leak into assertions.
+    monkeypatch.setenv("AUTOGTM_LOAD_DOTENV", "0")
     """Settings are cached for the process; each test gets its own view."""
     for key in (
         "TYPESAFE_API_KEY", "JEV_API_URL", "JEV_TIMEOUT_SECONDS", "JEV_MAX_ATTEMPTS",

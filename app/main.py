@@ -1,5 +1,11 @@
 from fastapi import FastAPI
-from app.api import health, campaigns, leads
+
+# Before any module reads os.environ.
+from app.bootstrap import load_env
+
+load_env()
+
+from app.api import health, campaigns, leads  # noqa: E402
 
 app = FastAPI(
     title="Campus AutoGTM",

@@ -10,6 +10,8 @@ uvicorn[standard]==0.34.0
 requests==2.32.3
 pydantic==2.13.4
 PyJWT==2.12.1
+# Loads Infra/.env; without it the documented env file does nothing.
+python-dotenv==1.0.1
 
 # Tests
 pytest==8.2.0
