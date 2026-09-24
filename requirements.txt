@@ -1,4 +1,11 @@
-fastapi
-uvicorn[standard]
-requests
-pydantic
+# Pinned: an unpinned transitive bump has already changed behaviour once
+# (pydantic v1 -> v2 turned .dict() into a deprecation and changed how
+# Optional fields without defaults are treated).
+fastapi==0.141.1
+uvicorn[standard]==0.34.0
+requests==2.32.3
+pydantic==2.13.4
+supabase==2.5.1
+
+# Tests
+pytest==8.2.0
