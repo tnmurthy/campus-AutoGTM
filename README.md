@@ -31,8 +31,19 @@ Jev fit score, and `notes` carrying the model's one-line rationale.
 | Preflight deduplication | Working |
 | Win/loss feedback -> ICP recalibration | Not built |
 
-Replacing `agents/prospector_agent.discover_leads` is the only remaining work
-to make the pipeline live; everything downstream of it is real.
+Campaign targeting is applied at discovery: `segment_states`, `college_types`
+and `departments` filter the roster before anything is scored. Matching is on
+word sets, so "Engineering Autonomous" finds a college typed "Autonomous
+Engineering College"; an empty criterion means no constraint.
+
+The pipeline is live end to end. Point `PROSPECTOR_FILE` at a roster and a
+campaign produces real CRM opportunities.
+
+Discovery deliberately does **not** scrape the AICTE dashboard. That is an
+AngularJS front end over undocumented internal endpoints with no published
+contract and no robots policy; a scraper on it would break silently on any
+redeploy. The file source consumes AICTE exports directly, and the datagov
+source uses the documented key-authenticated resource API.
 
 ## Quick start
 
@@ -69,6 +80,9 @@ curl -X POST localhost:8000/campaigns/1/run
 | `SUPABASE_ANON_KEY` | to persist | Sent as the `apikey` header |
 | `SUPABASE_JWT_SECRET` | to persist | Signs a short-lived `autogtm_writer` token |
 | `CRM_ROLE` | no | Defaults to `autogtm_writer` |
+| `PROSPECTOR_SOURCE` | no | `file`, `datagov` or `stub` (default) |
+| `PROSPECTOR_FILE` | for `file` | Path to a CSV/JSON college roster |
+| `DATAGOV_RESOURCE_ID` / `DATAGOV_API_KEY` | for `datagov` | data.gov.in resource |
 | `MIN_FIT_SCORE` | no | Default qualification threshold (70) |
 | `JEV_API_URL` / `JEV_TIMEOUT_SECONDS` / `JEV_MAX_ATTEMPTS` | no | Transport tuning |
 
@@ -101,4 +115,4 @@ key, and never log the service role key.
 python -m pytest tests -q
 ```
 
-36 tests, no credentials and no database required.
+51 tests, no credentials and no database required.

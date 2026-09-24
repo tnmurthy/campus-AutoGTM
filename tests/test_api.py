@@ -75,7 +75,12 @@ def test_run_endpoint_executes_the_pipeline_off_the_event_loop(client, monkeypat
             "rationale": {"value": "Strong CSE cohort."},
         },
     )
-    campaign_id = client.post("/campaigns/", json=_payload()).json()["id"]
+    # Targeting that matches the stub lead; this test is about the threadpool
+    # hand-off, not about the prospector's campaign filter.
+    campaign_id = client.post(
+        "/campaigns/",
+        json=_payload(college_types=["Engineering"], departments=["CSE"]),
+    ).json()["id"]
 
     leads = client.post(f"/campaigns/{campaign_id}/run").json()
 

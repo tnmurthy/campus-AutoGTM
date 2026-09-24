@@ -15,6 +15,8 @@ DEFAULT_JEV_TIMEOUT_SECONDS = 15.0
 DEFAULT_JEV_MAX_ATTEMPTS = 3
 DEFAULT_CRM_ROLE = "autogtm_writer"
 DEFAULT_CRM_TOKEN_TTL = 300
+DEFAULT_PROSPECTOR_SOURCE = "stub"
+PROSPECTOR_SOURCES = ("file", "datagov", "stub")
 
 
 class ConfigError(RuntimeError):
@@ -32,6 +34,10 @@ class Settings:
     supabase_jwt_secret: str | None
     crm_role: str
     crm_token_ttl_seconds: int
+    prospector_source: str
+    prospector_file: str | None
+    datagov_resource_id: str | None
+    datagov_api_key: str | None
     min_fit_score: float
 
     def require_jev(self) -> str:
@@ -66,6 +72,29 @@ class Settings:
             self.supabase_jwt_secret,  # type: ignore[return-value]
         )
 
+    def require_prospector_file(self) -> str:
+        if not self.prospector_file:
+            raise ConfigError(
+                "PROSPECTOR_FILE must point at a CSV or JSON roster when "
+                "PROSPECTOR_SOURCE=file",
+            )
+        return self.prospector_file
+
+    def require_datagov(self) -> tuple[str, str]:
+        missing = [
+            name
+            for name, value in (
+                ("DATAGOV_RESOURCE_ID", self.datagov_resource_id),
+                ("DATAGOV_API_KEY", self.datagov_api_key),
+            )
+            if not value
+        ]
+        if missing:
+            raise ConfigError(
+                f"{', '.join(missing)} must be set when PROSPECTOR_SOURCE=datagov",
+            )
+        return self.datagov_resource_id, self.datagov_api_key  # type: ignore[return-value]
+
     @property
     def persistence_enabled(self) -> bool:
         return bool(
@@ -93,6 +122,13 @@ def _int(name: str, fallback: int) -> int:
         raise ConfigError(f"{name} must be an integer, got {raw!r}") from exc
 
 
+def _choice(name: str, fallback: str, allowed: tuple[str, ...]) -> str:
+    value = (os.environ.get(name) or fallback).strip().lower()
+    if value not in allowed:
+        raise ConfigError(f"{name} must be one of {', '.join(allowed)}; got {value!r}")
+    return value
+
+
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     return Settings(
@@ -105,5 +141,9 @@ def get_settings() -> Settings:
         supabase_jwt_secret=os.environ.get("SUPABASE_JWT_SECRET"),
         crm_role=os.environ.get("CRM_ROLE", DEFAULT_CRM_ROLE),
         crm_token_ttl_seconds=_int("CRM_TOKEN_TTL_SECONDS", DEFAULT_CRM_TOKEN_TTL),
+        prospector_source=_choice("PROSPECTOR_SOURCE", DEFAULT_PROSPECTOR_SOURCE, PROSPECTOR_SOURCES),
+        prospector_file=os.environ.get("PROSPECTOR_FILE"),
+        datagov_resource_id=os.environ.get("DATAGOV_RESOURCE_ID"),
+        datagov_api_key=os.environ.get("DATAGOV_API_KEY"),
         min_fit_score=_float("MIN_FIT_SCORE", DEFAULT_MIN_FIT_SCORE),
     )

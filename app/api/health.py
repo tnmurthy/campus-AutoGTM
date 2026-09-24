@@ -20,5 +20,6 @@ async def health_check():
         "jev_configured": bool(settings.jev_api_key),
         "persistence_enabled": settings.persistence_enabled,
         "crm_role": settings.crm_role,
+        "prospector_source": settings.prospector_source,
         "min_fit_score": settings.min_fit_score,
     }

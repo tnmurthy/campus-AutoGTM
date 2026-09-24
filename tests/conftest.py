@@ -16,6 +16,8 @@ def clean_settings(monkeypatch):
         "TYPESAFE_API_KEY", "JEV_API_URL", "JEV_TIMEOUT_SECONDS", "JEV_MAX_ATTEMPTS",
         "SUPABASE_URL", "SUPABASE_ANON_KEY", "SUPABASE_JWT_SECRET",
         "CRM_ROLE", "CRM_TOKEN_TTL_SECONDS", "MIN_FIT_SCORE",
+        "PROSPECTOR_SOURCE", "PROSPECTOR_FILE",
+        "DATAGOV_RESOURCE_ID", "DATAGOV_API_KEY",
     ):
         monkeypatch.delenv(key, raising=False)
     get_settings.cache_clear()
