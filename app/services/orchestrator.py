@@ -24,6 +24,7 @@ from app.config import get_settings
 from app.schemas.campaign import CampaignRead
 from app.schemas.lead import (
     STATUS_FAILED,
+    STATUS_NEEDS_EVIDENCE,
     STATUS_PERSISTED,
     STATUS_SCORED,
     STATUS_SKIPPED,
@@ -97,6 +98,14 @@ def run_campaign(campaign: CampaignRead, crm: Any = crm_client) -> list[LeadRead
             continue
 
         lead = _score(campaign, raw, index)
+
+        # Enrichment ran and found nothing, so the score rests on a name, a
+        # type and a city. In one calibration slice that produced 41.2 and
+        # 99.5 for comparable institutions, and every label/score disagreement
+        # sat here. Held for a person rather than auto-qualified either way.
+        if settings.enrichment_enabled and not lead.has_evidence:
+            lead = lead.model_copy(update={"status": STATUS_NEEDS_EVIDENCE})
+
         results.append(lead)
         if lead.status == STATUS_SCORED:
             pending.append((index, raw, lead))

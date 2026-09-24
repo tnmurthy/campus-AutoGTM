@@ -75,6 +75,12 @@ def score_lead_with_jev(
     # paid-training push do not qualify a college the same way.
     qualifies = send_now and fit_label != "reject" and fit_score >= min_fit_score
 
+    # Whether the judgement rests on crawled evidence or only on the roster row
+    # is reported, not acted on: only the caller knows if enrichment was even
+    # attempted, and with it switched off every lead would otherwise be held.
+    has_evidence = bool(state.get("website_evidence"))
+    status = STATUS_SCORED if qualifies else STATUS_SKIPPED
+
     lead = state.get("college") or state.get("lead", {})
     return LeadRead(
         id=lead_id,
@@ -84,9 +90,10 @@ def score_lead_with_jev(
         email=lead.get("email"),
         fit_label=fit_label,
         fit_score=fit_score,
-        rationale=_rationale(fit_label, fit_score, send_now_probability),
+        rationale=_rationale(fit_label, fit_score, send_now_probability, has_evidence),
         source_campaign_id=campaign_id,
-        status=STATUS_SCORED if qualifies else STATUS_SKIPPED,
+        status=status,
+        has_evidence=has_evidence,
     )
 
 
@@ -103,9 +110,10 @@ def _to_percentage(raw: float) -> float:
     return round(max(0.0, min(raw, top)) / top * 100, 1)
 
 
-def _rationale(fit_label: str, fit_score: float, send_now: float) -> str:
+def _rationale(fit_label: str, fit_score: float, send_now: float, has_evidence: bool = True) -> str:
     """Composed here because there is no free-text primitive to ask for it."""
+    basis = "" if has_evidence else " No website evidence: judged on roster data only."
     return (
         f"Jev: {str(fit_label).replace('_', ' ')}, fit {fit_score:.0f}/100, "
-        f"send-now confidence {send_now:.0%}."
+        f"send-now confidence {send_now:.0%}.{basis}"
     )

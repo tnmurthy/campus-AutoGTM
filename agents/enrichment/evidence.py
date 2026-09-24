@@ -51,15 +51,59 @@ class Evidence:
         return not self.excerpts and not self.departments
 
 
+MIN_MAIN_CHARS = 400
+
+
 def page_text(html: str) -> str:
+    """Readable text, preferring a main content region when one exists.
+
+    Deleting nav/header/footer outright was too blunt: it killed the GRIET
+    navigation blob, but on sites that wrap their whole page in those elements
+    it took the content too -- one 74 KB homepage reduced to 48 characters.
+
+    So chrome is only dropped when there is a substantial main region to keep
+    instead. Otherwise the full body is used and the boilerplate is suppressed
+    where it actually matters, at the excerpt level, by MAX_SENTENCE_CHARS: a
+    navigation blob is one enormous punctuation-free run and is rejected there.
+    """
     soup = BeautifulSoup(html, "lxml")
-    # nav/header/footer are the same link soup on every page. Left in, that
-    # one giant punctuation-free blob matched every topic keyword and won the
-    # top excerpt slot for placement, departments and scale simultaneously.
-    for tag in soup(["script", "style", "noscript", "svg", "form",
-                     "nav", "header", "footer", "aside"]):
+    for tag in soup(["script", "style", "noscript", "svg", "form"]):
         tag.decompose()
-    return re.sub(r"\s+", " ", soup.get_text(" ", strip=True))
+
+    for selector in ("main", "article", "[role=main]", "#content", "#main"):
+        region = soup.select_one(selector)
+        if region is None:
+            continue
+        text = _collapse(region.get_text(" ", strip=True))
+        if len(text) >= MIN_MAIN_CHARS:
+            return text
+
+    return _collapse(soup.get_text(" ", strip=True))
+
+
+# Sequences that only occur when utf-8 bytes were already decoded as cp1252
+# once before being saved -- mojibake baked into the page's own source.
+MOJIBAKE_MARKERS = ("â€", "Ã©", "Â ", "â")
+
+
+def _repair_mojibake(text: str) -> str:
+    """Undo double-encoding present in the source, not caused by our decoding.
+
+    Several college sites serve utf-8 that was already mangled before it was
+    published. Left alone it reaches the model as "Roboticsa€™", which is noise
+    in an excerpt whose whole job is to be evidence.
+    """
+    if not any(marker in text for marker in MOJIBAKE_MARKERS):
+        return text
+    try:
+        repaired = text.encode("cp1252", errors="strict").decode("utf-8", errors="strict")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return text
+    return repaired if repaired.count("�") <= text.count("�") else text
+
+
+def _collapse(text: str) -> str:
+    return _repair_mojibake(re.sub(r"\s+", " ", text))
 
 
 def candidate_links(html: str, base_url: str, limit: int = MAX_PAGES) -> list[str]:

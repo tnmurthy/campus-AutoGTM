@@ -179,3 +179,57 @@ def test_runs_without_crm_configured(monkeypatch):
     assert leads[0].status == STATUS_SCORED
     assert crm.ingest_calls == []
     assert leads[0].college_id is None
+
+
+class TestEvidenceGate:
+    """A score built on no crawled evidence must not auto-qualify.
+
+    In one calibration slice, comparable colleges with no website evidence
+    scored 41.2 and 99.5, and every label/score disagreement occurred there.
+    """
+
+    @pytest.fixture
+    def enriching(self, persisting, monkeypatch):
+        monkeypatch.setenv("ENRICHMENT_ENABLED", "true")
+        get_settings.cache_clear()
+        # No network: enrichment returns each lead unchanged.
+        monkeypatch.setattr(
+            "agents.enrichment.enricher.enrich_all",
+            lambda leads, cache_dir, timeout, max_pages: list(leads),
+        )
+
+    def test_a_high_score_with_no_evidence_is_held_not_persisted(
+        self, enriching, monkeypatch
+    ):
+        patch_jev(monkeypatch, stub_decision(4.0))  # would be 100/100
+        crm = FakeCrm()
+
+        leads = orchestrator.run_campaign(make_campaign(), crm=crm)
+
+        assert leads[0].status == "needs_evidence"
+        assert leads[0].fit_score == 100.0  # the judgement is kept, not discarded
+        assert crm.ingest_calls == [], "wrote a lead judged on no evidence"
+
+    def test_evidence_present_qualifies_normally(self, enriching, monkeypatch):
+        patch_jev(monkeypatch, stub_decision(4.0))
+        crm = FakeCrm()
+        monkeypatch.setattr(
+            "agents.enrichment.enricher.enrich_all",
+            lambda leads, cache_dir, timeout, max_pages: [
+                {**l, "evidence": {"placement": ["An active placement cell."]}} for l in leads
+            ],
+        )
+
+        leads = orchestrator.run_campaign(make_campaign(), crm=crm)
+
+        assert leads[0].status == STATUS_PERSISTED
+
+    def test_the_gate_is_off_when_enrichment_is_off(self, persisting, monkeypatch):
+        # Enrichment disabled means we knowingly work from roster data; holding
+        # every lead would stall the pipeline instead of protecting it.
+        patch_jev(monkeypatch, stub_decision(4.0))
+        crm = FakeCrm()
+
+        leads = orchestrator.run_campaign(make_campaign(), crm=crm)
+
+        assert leads[0].status == STATUS_PERSISTED
