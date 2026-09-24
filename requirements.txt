@@ -2,6 +2,10 @@
 # (pydantic v1 -> v2 turned .dict() into a deprecation and changed how
 # Optional fields without defaults are treated).
 fastapi==0.141.1
+# starlette is a transitive of fastapi, pinned because leaving it floating let
+# CI resolve a newer release whose TestClient wants a different HTTP library
+# than the one installed locally -- green here, red there.
+starlette==1.0.0
 uvicorn[standard]==0.34.0
 requests==2.32.3
 pydantic==2.13.4
@@ -9,3 +13,5 @@ PyJWT==2.12.1
 
 # Tests
 pytest==8.2.0
+# fastapi.testclient needs an HTTP client; it is not pulled in by fastapi.
+httpx==0.27.0
