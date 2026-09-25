@@ -23,6 +23,7 @@ from app.schemas.lead import (
     STATUS_PERSISTED,
     STATUS_SCORED,
     STATUS_SKIPPED,
+    STATUS_UNBUDGETED,
 )
 from app.services import crm_client
 from app.services.orchestrator import run_campaign
@@ -72,21 +73,25 @@ class _Heartbeat:
                 logger.warning("heartbeat failed for run %s: %s", self._run_id, exc)
 
 
-def _counts(leads: list[Any], jev_calls: int) -> dict[str, int]:
+# Not scored, not persisted, not failed. `budget_exhausted` on the run says
+# which of these was a judgement and which was the ceiling.
+_NOT_TAKEN = (STATUS_SKIPPED, STATUS_NEEDS_EVIDENCE, STATUS_UNBUDGETED)
+
+
+def _counts(leads: list[Any], stats: dict[str, int]) -> dict[str, Any]:
     status_of = [lead.status for lead in leads]
     return {
         "leads_found": len(leads),
         "leads_scored": sum(1 for s in status_of if s in (STATUS_SCORED, STATUS_PERSISTED)),
         "leads_persisted": status_of.count(STATUS_PERSISTED),
-        "leads_skipped": sum(
-            1 for s in status_of if s in (STATUS_SKIPPED, STATUS_NEEDS_EVIDENCE)
-        ),
+        "leads_skipped": sum(1 for s in status_of if s in _NOT_TAKEN),
         "leads_failed": status_of.count(STATUS_FAILED),
-        "jev_calls": jev_calls,
+        "jev_calls": stats.get("jev_calls", 0),
+        "budget_exhausted": bool(stats.get("budget_exhausted")),
     }
 
 
-def execute_run(run: dict[str, Any], crm: Any = None) -> dict[str, int]:
+def execute_run(run: dict[str, Any], crm: Any = None) -> dict[str, Any]:
     """Run one claimed campaign run to completion and record the outcome."""
     client = crm if crm is not None else crm_client
     run_id = str(run["id"])
@@ -107,7 +112,7 @@ def execute_run(run: dict[str, Any], crm: Any = None) -> dict[str, int]:
         client.run_finish(run_id, "failed", {"jev_calls": stats["jev_calls"]}, str(exc)[:500])
         raise
 
-    counts = _counts(leads, stats["jev_calls"])
+    counts = _counts(leads, stats)
     client.run_finish(run_id, "succeeded", counts)
     logger.info("run %s finished: %s", run_id, counts)
     return counts

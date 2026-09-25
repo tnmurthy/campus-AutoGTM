@@ -28,6 +28,10 @@ class CampaignBase(BaseModel):
         le=100,
         description="Leads scoring below this are recorded as skipped, not written.",
     )
+    # Lifetime cap on colleges scored for this campaign. None means uncapped.
+    # Scoring is what gets billed, so this is where a sweep whose targeting
+    # matches far more than intended stops costing money.
+    max_jev_calls: Optional[int] = Field(default=None, gt=0)
 
 
 class CampaignCreate(CampaignBase):
@@ -40,6 +44,8 @@ class CampaignRead(CampaignBase):
     # happened to be created since the process started.
     id: str
     is_active: bool = True
+    # Summed from this campaign's runs by the database, not tracked here.
+    jev_calls_used: int = 0
 
     @classmethod
     def from_row(cls, row: dict) -> "CampaignRead":
@@ -55,6 +61,8 @@ class CampaignRead(CampaignBase):
             min_fit_score=float(row.get("min_fit_score") or DEFAULT_MIN_FIT_SCORE),
             target_meetings_per_week=int(row.get("target_meetings_per_week") or 0),
             is_active=bool(row.get("is_active", True)),
+            max_jev_calls=row.get("max_jev_calls"),
+            jev_calls_used=int(row.get("jev_calls_used") or 0),
         )
 
     def to_payload(self) -> dict:
@@ -70,4 +78,5 @@ class CampaignRead(CampaignBase):
             "min_fit_score": self.min_fit_score,
             "target_meetings_per_week": self.target_meetings_per_week,
             "is_active": self.is_active,
+            "max_jev_calls": self.max_jev_calls,
         }

@@ -7,6 +7,7 @@ from app.schemas.lead import (
     STATUS_PERSISTED,
     STATUS_SCORED,
     STATUS_SKIPPED,
+    STATUS_UNBUDGETED,
 )
 from app.services import orchestrator
 from app.services.jev_client import JevError
@@ -254,3 +255,111 @@ class TestEvidenceGate:
         leads = orchestrator.run_campaign(make_campaign(), crm=crm)
 
         assert leads[0].status == STATUS_PERSISTED
+
+
+class TestSpendCeiling:
+    """A campaign's ceiling on how many colleges it may score.
+
+    Scoring is what gets billed, and targeting that matches ten times the
+    intended pool costs ten times as much with nothing to stop it. The first
+    anyone would know is the invoice.
+    """
+
+    @staticmethod
+    def _five_colleges(monkeypatch) -> None:
+        monkeypatch.setattr(
+            orchestrator,
+            "discover_leads",
+            lambda campaign: [
+                {"college_name": f"College {n}", "city": "Hyderabad", "state": "Telangana"}
+                for n in range(1, 6)
+            ],
+        )
+
+    def test_scores_only_what_the_campaign_can_still_afford(self, persisting, monkeypatch):
+        self._five_colleges(monkeypatch)
+        calls = patch_jev(monkeypatch, stub_decision(4.0))
+        crm = FakeCrm()
+
+        leads = orchestrator.run_campaign(
+            make_campaign(max_jev_calls=2), crm=crm, stats={"jev_calls": 0}
+        )
+
+        assert len(calls) == 2, "scored past the ceiling"
+        assert [lead.status for lead in leads[:2]] == [STATUS_PERSISTED, STATUS_PERSISTED]
+        assert all(lead.status == STATUS_UNBUDGETED for lead in leads[2:])
+
+    def test_counts_what_earlier_runs_already_spent(self, persisting, monkeypatch):
+        # The ceiling is a lifetime count, so a second run inherits the spend
+        # of the first rather than starting over.
+        self._five_colleges(monkeypatch)
+        calls = patch_jev(monkeypatch, stub_decision(4.0))
+
+        orchestrator.run_campaign(
+            make_campaign(max_jev_calls=4, jev_calls_used=3), crm=FakeCrm()
+        )
+
+        assert len(calls) == 1
+
+    def test_says_so_in_the_stats_when_the_ceiling_stopped_it(self, persisting, monkeypatch):
+        self._five_colleges(monkeypatch)
+        patch_jev(monkeypatch, stub_decision(4.0))
+        stats: dict[str, int] = {"jev_calls": 0}
+
+        orchestrator.run_campaign(make_campaign(max_jev_calls=2), crm=FakeCrm(), stats=stats)
+
+        assert stats["budget_exhausted"]
+        assert stats["jev_calls"] == 2
+
+    def test_a_spent_campaign_scores_nothing_rather_than_one_more(self, persisting, monkeypatch):
+        self._five_colleges(monkeypatch)
+        calls = patch_jev(monkeypatch, stub_decision(4.0))
+
+        leads = orchestrator.run_campaign(
+            make_campaign(max_jev_calls=2, jev_calls_used=9), crm=FakeCrm()
+        )
+
+        assert calls == []
+        assert all(lead.status == STATUS_UNBUDGETED for lead in leads)
+
+    def test_an_unbudgeted_lead_explains_itself(self, persisting, monkeypatch):
+        # It was never looked at. Reading that as a low score would park a
+        # college that has not been judged at all.
+        self._five_colleges(monkeypatch)
+        patch_jev(monkeypatch, stub_decision(4.0))
+
+        leads = orchestrator.run_campaign(make_campaign(max_jev_calls=1), crm=FakeCrm())
+
+        assert "ceiling" in (leads[-1].rationale or "")
+        assert leads[-1].fit_score == 0.0
+
+    def test_no_ceiling_means_no_ceiling(self, persisting, monkeypatch):
+        self._five_colleges(monkeypatch)
+        calls = patch_jev(monkeypatch, stub_decision(4.0))
+        stats: dict[str, int] = {"jev_calls": 0}
+
+        leads = orchestrator.run_campaign(make_campaign(), crm=FakeCrm(), stats=stats)
+
+        assert len(calls) == 5
+        assert stats.get("budget_exhausted") is None
+        assert not [lead for lead in leads if lead.status == STATUS_UNBUDGETED]
+
+    def test_the_unaffordable_are_never_crawled(self, persisting, monkeypatch):
+        # Enrichment is the stage that touches someone else's servers, and it
+        # is the slow one. Crawling a college the campaign cannot afford to
+        # score spends the run's time for nothing.
+        self._five_colleges(monkeypatch)
+        patch_jev(monkeypatch, stub_decision(4.0))
+        monkeypatch.setenv("ENRICHMENT_ENABLED", "1")
+        get_settings.cache_clear()
+        crawled: list[str] = []
+
+        def fake_enrich(leads, cache_dir, timeout, max_pages):
+            crawled.extend(lead["college_name"] for lead in leads)
+            return leads
+
+        monkeypatch.setattr("agents.enrichment.enricher.enrich_all", fake_enrich)
+
+        orchestrator.run_campaign(make_campaign(max_jev_calls=2), crm=FakeCrm())
+
+        assert crawled == ["College 1", "College 2"]

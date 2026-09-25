@@ -136,7 +136,7 @@ def run_heartbeat(run_id: str) -> None:
 
 
 def run_finish(
-    run_id: str, status: str, counts: dict[str, int], error: str | None = None
+    run_id: str, status: str, counts: dict[str, Any], error: str | None = None
 ) -> dict[str, Any]:
     result = _rpc(
         "campaign_run_finish",

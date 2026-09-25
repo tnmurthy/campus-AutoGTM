@@ -106,6 +106,28 @@ class TestRunOnce:
         assert "exploded" in stored["error"]
 
 
+    def test_records_that_the_ceiling_is_what_stopped_the_run(self, configured, monkeypatch):
+        # A run that did exactly what it was allowed to do and then stopped is
+        # not a failure. Reading one as the other is how a working budget gets
+        # mistaken for a broken worker.
+        monkeypatch.setattr(
+            "app.services.orchestrator.discover_leads",
+            lambda campaign: [{"college_name": f"College {n}"} for n in range(1, 4)],
+        )
+        crm = FakeCrm()
+        campaign = crm.campaign_upsert(
+            {"name": "Capped Sweep", "college_types": ["Engineering"], "max_jev_calls": 1}
+        )
+        crm.run_enqueue(campaign["id"])
+
+        worker.run_once(crm=crm)
+
+        stored = next(iter(crm.runs.values()))
+        assert stored["status"] == "succeeded"
+        assert stored["budget_exhausted"] is True
+        assert stored["jev_calls"] == 1
+
+
 class TestHeartbeat:
     def test_reports_liveness_while_a_run_is_in_progress(self):
         # Distinguishing slow from dead is the whole point: crawling is slow,

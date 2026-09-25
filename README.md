@@ -64,7 +64,8 @@ curl -X POST localhost:8000/campaigns/ -H 'content-type: application/json' -d '{
   "objective": "Book 10 hackathons this quarter",
   "target_meetings_per_week": 5,
   "opportunity_type": "hackathon",
-  "min_fit_score": 75
+  "min_fit_score": 75,
+  "max_jev_calls": 40
 }'
 
 # Queues a run and returns 202 with something to poll.
@@ -138,6 +139,14 @@ key, and never log the service role key.
 - **Campaigns are rows in BrainOpsHub**, reached through `campaign_upsert` and
   `campaign_fetch`. They survive a restart and ops can see them. The endpoints
   refuse with 503 when no CRM is configured rather than half-working.
+- **A campaign cannot outspend its ceiling.** `max_jev_calls` caps how many
+  colleges a campaign will ever score, which is the billed part. Without it,
+  targeting that matches ten times the intended pool costs ten times as much
+  and the first anyone knows is the invoice. Colleges beyond the ceiling come
+  back as `unbudgeted` rather than `skipped`: they were never looked at, and
+  reading that as a low score would park a college nobody judged. They are not
+  crawled either -- the list is truncated before enrichment, which is the slow
+  stage and the one that touches someone else's servers.
 - **Runs are queued, not requested.** `campaign_runs` is a table rather than a
   message queue because a run is not a message to be consumed and forgotten --
   it is the record of what a campaign did, how long it took and what it cost.
@@ -153,4 +162,4 @@ key, and never log the service role key.
 python -m pytest tests -q
 ```
 
-90 tests, no credentials and no database required.
+98 tests, no credentials and no database required.

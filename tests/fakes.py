@@ -83,6 +83,10 @@ class FakeCrm:
 
     def campaign_upsert(self, campaign: dict[str, Any]) -> dict[str, Any]:
         """Mirrors campaign_upsert, including the validation it performs."""
+        # The real function defaults this rather than demanding it. A fake that
+        # is stricter than the thing it stands in for fails tests the system
+        # would have passed.
+        campaign = {**campaign, "opportunity_type": campaign.get("opportunity_type") or "training"}
         if campaign.get("opportunity_type") not in (
             "hackathon",
             "training",
@@ -105,8 +109,19 @@ class FakeCrm:
         """One campaign by id, or every active one when id is omitted."""
         if campaign_id is not None:
             row = self.campaigns.get(campaign_id)
-            return [row] if row else []
-        return [r for r in self.campaigns.values() if r.get("is_active", True)]
+            return [self._with_spend(row)] if row else []
+        return [
+            self._with_spend(r) for r in self.campaigns.values() if r.get("is_active", True)
+        ]
+
+    def _with_spend(self, row: dict[str, Any]) -> dict[str, Any]:
+        """Spend is summed from the runs, as campaign_jev_calls_used does."""
+        used = sum(
+            int(run.get("jev_calls") or 0)
+            for run in self.runs.values()
+            if run["campaign_id"] == row["id"]
+        )
+        return {**row, "jev_calls_used": used}
 
     # -- run queue ----------------------------------------------------------
 
@@ -115,6 +130,16 @@ class FakeCrm:
         for run in self.runs.values():
             if run["campaign_id"] == campaign_id and run["status"] in ("queued", "running"):
                 return {**run, "already_queued": True}
+        campaign = self.campaigns.get(campaign_id)
+        cap = (campaign or {}).get("max_jev_calls")
+        if cap is not None:
+            used = self._with_spend(campaign)["jev_calls_used"]
+            if used >= cap:
+                raise RuntimeError(
+                    f"campaign {campaign_id} has spent its ceiling of {cap} "
+                    f"scored colleges ({used} used)"
+                )
+
         run_id = f"run-{len(self.runs) + 1}"
         run = {
             "id": run_id,
@@ -136,7 +161,7 @@ class FakeCrm:
         self.heartbeats.append(run_id)
 
     def run_finish(
-        self, run_id: str, status: str, counts: dict[str, int], error: str | None = None
+        self, run_id: str, status: str, counts: dict[str, Any], error: str | None = None
     ) -> dict[str, Any]:
         run = self.runs[run_id]
         run.update(status=status, error=error, **counts)

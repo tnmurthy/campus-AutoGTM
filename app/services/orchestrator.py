@@ -28,6 +28,7 @@ from app.schemas.lead import (
     STATUS_PERSISTED,
     STATUS_SCORED,
     STATUS_SKIPPED,
+    STATUS_UNBUDGETED,
     LeadRead,
 )
 from app.services import crm_client
@@ -81,45 +82,34 @@ def run_campaign(
     # that touches someone else's servers, so a college already ingested for
     # this campaign is neither crawled nor judged.
     to_score = [(k, raw) for k, raw in keyed if k not in known_keys]
-    if settings.enrichment_enabled and to_score:
-        from agents.enrichment.enricher import enrich_all
 
-        enriched = enrich_all(
-            [raw for _, raw in to_score],
-            cache_dir=settings.enrichment_cache_dir,
-            timeout=settings.enrichment_timeout_seconds,
-            max_pages=settings.enrichment_max_pages,
-        )
-        by_key = {k: e for (k, _), e in zip(to_score, enriched)}
-        keyed = [(k, by_key.get(k, raw)) for k, raw in keyed]
+    # Truncated before enrichment, not during scoring: crawling a college the
+    # campaign cannot afford to score wastes the slow part of the run and hits
+    # someone else's server for nothing.
+    affordable, unbudgeted = _split_on_budget(campaign, to_score)
+    if unbudgeted and stats is not None:
+        stats["budget_exhausted"] = 1
+    to_score = affordable
+
+    if settings.enrichment_enabled and to_score:
+        keyed = _enriched(keyed, to_score, settings)
 
     results: list[LeadRead] = []
     pending: list[tuple[int, dict[str, Any], LeadRead]] = []
+    unbudgeted_keys = {k for k, _ in unbudgeted}
 
     for index, (key, raw) in enumerate(keyed, start=1):
+        if key in unbudgeted_keys:
+            results.append(_not_looked_at(campaign, index, raw))
+            continue
+
         if key in known_keys:
-            # Already in the CRM for this campaign. Skipping the Jev call is
-            # the entire point of preflight.
-            results.append(
-                LeadRead(
-                    id=index,
-                    college_name=str(raw.get("college_name", "unknown")),
-                    source_campaign_id=campaign.id,
-                    status=STATUS_PERSISTED,
-                )
-            )
+            results.append(_already_there(campaign, index, raw))
             continue
 
         if stats is not None:
             stats["jev_calls"] = stats.get("jev_calls", 0) + 1
-        lead = _score(campaign, raw, index)
-
-        # Enrichment ran and found nothing, so the score rests on a name, a
-        # type and a city. In one calibration slice that produced 41.2 and
-        # 99.5 for comparable institutions, and every label/score disagreement
-        # sat here. Held for a person rather than auto-qualified either way.
-        if settings.enrichment_enabled and not lead.has_evidence:
-            lead = lead.model_copy(update={"status": STATUS_NEEDS_EVIDENCE})
+        lead = _judge(campaign, raw, index, settings)
 
         results.append(lead)
         if lead.status == STATUS_SCORED:
@@ -129,6 +119,83 @@ def run_campaign(
         _ingest(client, campaign, ref, pending, results)
 
     return results
+
+
+def _already_there(campaign: CampaignRead, index: int, raw: dict[str, Any]) -> LeadRead:
+    """Already in the CRM for this campaign.
+
+    Skipping the Jev call for these is the entire point of preflight.
+    """
+    return LeadRead(
+        id=index,
+        college_name=str(raw.get("college_name", "unknown")),
+        source_campaign_id=campaign.id,
+        status=STATUS_PERSISTED,
+    )
+
+
+def _judge(
+    campaign: CampaignRead, raw: dict[str, Any], index: int, settings: Any
+) -> LeadRead:
+    """Score one college, holding it back when there was nothing to score on.
+
+    Enrichment running and finding nothing means the score rests on a name, a
+    type and a city. In one calibration slice that produced 41.2 and 99.5 for
+    comparable institutions, and every label/score disagreement sat here. Held
+    for a person rather than auto-qualified either way.
+    """
+    lead = _score(campaign, raw, index)
+    if settings.enrichment_enabled and not lead.has_evidence:
+        return lead.model_copy(update={"status": STATUS_NEEDS_EVIDENCE})
+    return lead
+
+
+def _enriched(
+    keyed: list[tuple[str, dict[str, Any]]],
+    to_score: list[tuple[str, dict[str, Any]]],
+    settings: Any,
+) -> list[tuple[str, dict[str, Any]]]:
+    """Crawl evidence for the candidates that will actually be scored."""
+    from agents.enrichment.enricher import enrich_all
+
+    enriched = enrich_all(
+        [raw for _, raw in to_score],
+        cache_dir=settings.enrichment_cache_dir,
+        timeout=settings.enrichment_timeout_seconds,
+        max_pages=settings.enrichment_max_pages,
+    )
+    by_key = {k: e for (k, _), e in zip(to_score, enriched)}
+    return [(k, by_key.get(k, raw)) for k, raw in keyed]
+
+
+def _not_looked_at(campaign: CampaignRead, index: int, raw: dict[str, Any]) -> LeadRead:
+    """A college the campaign's ceiling was reached before.
+
+    Deliberately not `skipped`: nothing judged it, and a later run picks it up
+    if the ceiling is raised.
+    """
+    return LeadRead(
+        id=index,
+        college_name=str(raw.get("college_name", "unknown")),
+        source_campaign_id=campaign.id,
+        status=STATUS_UNBUDGETED,
+        rationale=(
+            f"The campaign reached its ceiling of {campaign.max_jev_calls} "
+            "scored colleges before this one."
+        ),
+    )
+
+
+def _split_on_budget(
+    campaign: CampaignRead,
+    to_score: list[tuple[str, dict[str, Any]]],
+) -> tuple[list[tuple[str, dict[str, Any]]], list[tuple[str, dict[str, Any]]]]:
+    """Divide the candidates into what the campaign can still afford and what it cannot."""
+    if campaign.max_jev_calls is None:
+        return to_score, []
+
+    remaining = max(campaign.max_jev_calls - campaign.jev_calls_used, 0)
+    return to_score[:remaining], to_score[remaining:]
 
 
 def _already_ingested(

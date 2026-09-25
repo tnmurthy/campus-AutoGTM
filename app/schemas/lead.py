@@ -11,6 +11,10 @@ STATUS_FAILED = "failed"      # scoring or persistence raised
 # judgement has been seen to land anywhere from 41 to 99 for comparable
 # colleges, so it is not trusted to auto-qualify.
 STATUS_NEEDS_EVIDENCE = "needs_evidence"
+# The campaign reached its spend ceiling before this college was reached. Not
+# a judgement -- it was never looked at, and a later run will pick it up if the
+# ceiling is raised.
+STATUS_UNBUDGETED = "unbudgeted"
 
 
 class LeadRead(BaseModel):
