@@ -50,7 +50,11 @@ def external_key(raw_lead: dict[str, Any]) -> str:
     return hashlib.sha256(basis.encode("utf-8")).hexdigest()[:32]
 
 
-def run_campaign(campaign: CampaignRead, crm: Any | None = None) -> list[LeadRead]:
+def run_campaign(
+    campaign: CampaignRead,
+    crm: Any | None = None,
+    stats: dict[str, int] | None = None,
+) -> list[LeadRead]:
     """Score and persist a campaign's leads.
 
     `crm` is injected so the pipeline is testable without a database; callers
@@ -59,6 +63,10 @@ def run_campaign(campaign: CampaignRead, crm: Any | None = None) -> list[LeadRea
     Resolved here rather than as a default argument. A default is bound once at
     import, so patching the module attribute could not reach it and a test that
     thought it had stubbed the client was quietly talking to the network.
+
+    `stats` is filled in as the run proceeds. Jev calls are the cost of a
+    campaign, and counting them here is the only place that knows how many
+    leads survived preflight to be scored.
     """
     client = crm if crm is not None else crm_client
     settings = get_settings()
@@ -102,6 +110,8 @@ def run_campaign(campaign: CampaignRead, crm: Any | None = None) -> list[LeadRea
             )
             continue
 
+        if stats is not None:
+            stats["jev_calls"] = stats.get("jev_calls", 0) + 1
         lead = _score(campaign, raw, index)
 
         # Enrichment ran and found nothing, so the score rests on a name, a

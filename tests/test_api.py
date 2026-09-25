@@ -126,27 +126,41 @@ def _payload(**overrides):
     return base
 
 
-def test_run_endpoint_executes_the_pipeline_off_the_event_loop(client, monkeypatch):
-    # Exercises the threadpool hand-off in the run route, which the unit tests
-    # bypass by calling run_campaign directly.
-    from tests.fakes import jev_response
+def test_a_run_request_queues_rather_than_crawling_in_the_request(client):
+    # A forty-college sweep is roughly twenty minutes of polite crawling. The
+    # request hands back something to poll instead of holding the connection.
+    campaign_id = client.post("/campaigns/", json=_payload()).json()["id"]
 
-    monkeypatch.setattr(
-        "agents.scoring_agent.call_jev",
-        lambda state, questions: jev_response(level=4.0),
-    )
-    # Targeting that matches the stub lead; this test is about the threadpool
-    # hand-off, not about the prospector's campaign filter.
-    campaign_id = client.post(
-        "/campaigns/",
-        json=_payload(college_types=["Engineering"], departments=["CSE"]),
-    ).json()["id"]
+    response = client.post(f"/campaigns/{campaign_id}/run")
 
-    leads = client.post(f"/campaigns/{campaign_id}/run").json()
+    assert response.status_code == 202
+    run = response.json()
+    assert run["campaign_id"] == campaign_id
+    assert run["status"] == "queued"
+    assert run["already_queued"] is False
 
-    assert len(leads) == 1
-    assert leads[0]["fit_score"] == 100.0
-    # The fixture configures a CRM, so a qualifying lead goes all the way in.
-    assert leads[0]["status"] == "persisted"
-    assert client.fake_crm.ingest_calls, "the run never reached the CRM"
-    assert client.get("/leads/").json()[0]["college_name"] == leads[0]["college_name"]
+
+def test_asking_twice_returns_the_run_already_in_flight(client):
+    # A double click is not an error, and two workers must not crawl the same
+    # colleges at once.
+    campaign_id = client.post("/campaigns/", json=_payload()).json()["id"]
+
+    first = client.post(f"/campaigns/{campaign_id}/run").json()
+    second = client.post(f"/campaigns/{campaign_id}/run").json()
+
+    assert second["id"] == first["id"]
+    assert second["already_queued"] is True
+
+
+def test_a_queued_run_can_be_polled_by_id(client):
+    campaign_id = client.post("/campaigns/", json=_payload()).json()["id"]
+    run_id = client.post(f"/campaigns/{campaign_id}/run").json()["id"]
+
+    polled = client.get(f"/campaigns/runs/{run_id}")
+
+    assert polled.status_code == 200
+    assert polled.json()["id"] == run_id
+
+
+def test_polling_an_unknown_run_is_404(client):
+    assert client.get("/campaigns/runs/44444444-4444-4444-4444-444444444444").status_code == 404

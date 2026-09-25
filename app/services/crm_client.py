@@ -112,6 +112,46 @@ def campaign_fetch(campaign_id: str | None = None) -> list[dict[str, Any]]:
     return result
 
 
+def run_enqueue(campaign_id: str) -> dict[str, Any]:
+    """Queue a run. Enqueueing twice returns the live run, not an error."""
+    result = _rpc("campaign_run_enqueue", {"p_campaign_id": campaign_id})
+    if not isinstance(result, dict):
+        raise CrmError(f"campaign_run_enqueue returned {type(result).__name__}")
+    return result
+
+
+def run_claim(worker: str, stale_after: str = "10 minutes") -> dict[str, Any] | None:
+    """Take the next run, or None when the queue is empty."""
+    result = _rpc("campaign_run_claim", {"p_worker": worker, "p_stale_after": stale_after})
+    if result is None:
+        return None
+    if not isinstance(result, dict):
+        raise CrmError(f"campaign_run_claim returned {type(result).__name__}")
+    return result
+
+
+def run_heartbeat(run_id: str) -> None:
+    """Say the worker is still alive, so the run is not reclaimed mid-crawl."""
+    _rpc("campaign_run_heartbeat", {"p_run_id": run_id})
+
+
+def run_finish(
+    run_id: str, status: str, counts: dict[str, int], error: str | None = None
+) -> dict[str, Any]:
+    result = _rpc(
+        "campaign_run_finish",
+        {"p_run_id": run_id, "p_status": status, "p_counts": counts, "p_error": error},
+    )
+    if not isinstance(result, dict):
+        raise CrmError(f"campaign_run_finish returned {type(result).__name__}")
+    return result
+
+
+def run_fetch(run_id: str) -> dict[str, Any] | None:
+    result = _rpc("campaign_run_fetch", {"p_run_id": run_id})
+    return result if isinstance(result, dict) else None
+
+
 def ingest(leads: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Write a batch. Atomic per lead, idempotent on (campaign_ref, external_key)."""
     if not leads:

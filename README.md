@@ -67,8 +67,24 @@ curl -X POST localhost:8000/campaigns/ -H 'content-type: application/json' -d '{
   "min_fit_score": 75
 }'
 
-curl -X POST localhost:8000/campaigns/1/run
+# Queues a run and returns 202 with something to poll.
+curl -X POST localhost:8000/campaigns/<id>/run
+curl localhost:8000/campaigns/runs/<run_id>
 ```
+
+A run crawls every candidate college before scoring it, and polite crawling is
+slow -- a forty-college sweep is roughly twenty minutes. That cannot live in an
+HTTP request, so the request only queues; a worker does the work:
+
+```bash
+python -m app.services.worker
+```
+
+The worker claims one queued run at a time (`FOR UPDATE SKIP LOCKED`),
+heartbeats while it crawls, and records what the run found and cost. A worker
+that dies mid-crawl stops heartbeating and its run is reclaimed after ten
+minutes; a run that fails three times is dead-lettered rather than retried
+forever.
 
 `GET /health/` reports which credentials are present without revealing them.
 
@@ -122,6 +138,14 @@ key, and never log the service role key.
 - **Campaigns are rows in BrainOpsHub**, reached through `campaign_upsert` and
   `campaign_fetch`. They survive a restart and ops can see them. The endpoints
   refuse with 503 when no CRM is configured rather than half-working.
+- **Runs are queued, not requested.** `campaign_runs` is a table rather than a
+  message queue because a run is not a message to be consumed and forgotten --
+  it is the record of what a campaign did, how long it took and what it cost.
+  At most one run per campaign is live at a time, so two workers never crawl
+  the same colleges or pay for the same scores twice.
+- **Leads are read in BrainOpsHub.** This service has no lead list of its own.
+  It had one, in process memory, which told a different story to every worker
+  and vanished on restart.
 
 ## Tests
 
@@ -129,4 +153,4 @@ key, and never log the service role key.
 python -m pytest tests -q
 ```
 
-69 tests, no credentials and no database required.
+90 tests, no credentials and no database required.

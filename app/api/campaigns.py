@@ -1,11 +1,9 @@
 from fastapi import APIRouter, HTTPException
 
-from app.api.leads import add_leads
 from app.config import ConfigError, get_settings
 from app.schemas.campaign import OPPORTUNITY_TYPES, CampaignCreate, CampaignRead
-from app.schemas.lead import LeadRead
+from app.schemas.run import CampaignRun
 from app.services import crm_client
-from app.services.orchestrator import run_campaign
 
 router = APIRouter()
 
@@ -62,8 +60,14 @@ async def list_campaigns():
     return [CampaignRead.from_row(r) for r in rows]
 
 
-@router.post("/{campaign_id}/run", response_model=list[LeadRead])
+@router.post("/{campaign_id}/run", response_model=CampaignRun, status_code=202)
 async def run_campaign_endpoint(campaign_id: str):
+    """Queue a run. The work happens in the worker, not in this request.
+
+    A run crawls every candidate college before scoring it, and polite
+    crawling is slow -- a forty-college sweep is roughly twenty minutes. No
+    HTTP request should hold that open, so this returns 202 with a run to poll.
+    """
     _require_crm()
 
     try:
@@ -73,16 +77,24 @@ async def run_campaign_endpoint(campaign_id: str):
 
     if not rows:
         raise HTTPException(status_code=404, detail="Campaign not found")
-
-    campaign = CampaignRead.from_row(rows[0])
-    if not campaign.is_active:
+    if not CampaignRead.from_row(rows[0]).is_active:
         raise HTTPException(status_code=409, detail="That campaign is not active")
 
-    # run_campaign is blocking: it crawls and makes one synchronous Jev call
-    # per lead. Off the event loop, or a run of any size stalls every other
-    # request. A queue is the real answer once runs get long.
-    from starlette.concurrency import run_in_threadpool
+    try:
+        run = crm_client.run_enqueue(campaign_id)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"Could not queue the run: {exc}") from exc
 
-    leads = await run_in_threadpool(run_campaign, campaign)
-    add_leads(leads)
-    return leads
+    return CampaignRun.from_row(run)
+
+
+@router.get("/runs/{run_id}", response_model=CampaignRun)
+async def get_run(run_id: str):
+    _require_crm()
+    try:
+        run = crm_client.run_fetch(run_id)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"Could not read the run: {exc}") from exc
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    return CampaignRun.from_row(run)

@@ -5,7 +5,7 @@ from app.bootstrap import load_env
 
 load_env()
 
-from app.api import health, campaigns, leads  # noqa: E402
+from app.api import health, campaigns  # noqa: E402
 
 app = FastAPI(
     title="Campus AutoGTM",
@@ -15,4 +15,3 @@ app = FastAPI(
 
 app.include_router(health.router, prefix="/health", tags=["health"])
 app.include_router(campaigns.router, prefix="/campaigns", tags=["campaigns"])
-app.include_router(leads.router, prefix="/leads", tags=["leads"])

@@ -12,6 +12,8 @@ from typing import Any
 class FakeCrm:
     def __init__(self, fail_ingest: bool = False, fail_preflight: bool = False):
         self.campaigns: dict[str, dict[str, Any]] = {}
+        self.runs: dict[str, dict[str, Any]] = {}
+        self.heartbeats: list[str] = []
         self.ledger: dict[tuple[str, str], dict[str, Any]] = {}
         self.colleges: dict[str, str] = {}
         self.ingest_calls: list[list[dict[str, Any]]] = []
@@ -105,6 +107,44 @@ class FakeCrm:
             row = self.campaigns.get(campaign_id)
             return [row] if row else []
         return [r for r in self.campaigns.values() if r.get("is_active", True)]
+
+    # -- run queue ----------------------------------------------------------
+
+    def run_enqueue(self, campaign_id: str) -> dict[str, Any]:
+        """Mirrors campaign_run_enqueue: a live run is returned, not duplicated."""
+        for run in self.runs.values():
+            if run["campaign_id"] == campaign_id and run["status"] in ("queued", "running"):
+                return {**run, "already_queued": True}
+        run_id = f"run-{len(self.runs) + 1}"
+        run = {
+            "id": run_id,
+            "campaign_id": campaign_id,
+            "status": "queued",
+            "attempt": 0,
+        }
+        self.runs[run_id] = run
+        return {**run, "already_queued": False}
+
+    def run_claim(self, worker: str, stale_after: str = "10 minutes") -> dict[str, Any] | None:
+        for run in self.runs.values():
+            if run["status"] == "queued":
+                run.update(status="running", attempt=run["attempt"] + 1, claimed_by=worker)
+                return dict(run)
+        return None
+
+    def run_heartbeat(self, run_id: str) -> None:
+        self.heartbeats.append(run_id)
+
+    def run_finish(
+        self, run_id: str, status: str, counts: dict[str, int], error: str | None = None
+    ) -> dict[str, Any]:
+        run = self.runs[run_id]
+        run.update(status=status, error=error, **counts)
+        return dict(run)
+
+    def run_fetch(self, run_id: str) -> dict[str, Any] | None:
+        run = self.runs.get(run_id)
+        return dict(run) if run else None
 
 
 
