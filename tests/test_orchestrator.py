@@ -15,7 +15,7 @@ from tests.fakes import FakeCrm, jev_response, percentage_for
 
 def make_campaign(**overrides) -> CampaignRead:
     base = dict(
-        id=1,
+        id="11111111-1111-1111-1111-111111111111",
         name="Telangana AI Hackathon Sweep",
         segment_states=["Telangana"],
         college_types=["Engineering Autonomous"],
@@ -66,7 +66,7 @@ def test_qualifying_lead_is_ingested_in_one_batched_call(persisting, monkeypatch
     sent = crm.ingest_calls[0][0]
     assert sent["opportunity_type"] == "hackathon"
     assert sent["fit_score"] == percentage_for(4.0) == 100.0
-    assert sent["campaign_ref"] == "campaign-1"
+    assert sent["campaign_ref"] == "campaign-11111111-1111-1111-1111-111111111111"
     # Stage and source are the database's to set, never sent from here.
     assert "stage" not in sent and "source" not in sent
     assert leads[0].college_id and leads[0].opportunity_id

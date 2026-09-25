@@ -17,7 +17,7 @@ CLG-XXX-4,"",,,,,"row with no name"
 
 def campaign(**over) -> CampaignRead:
     base = dict(
-        id=1, name="Sweep", segment_states=[], college_types=[], departments=[],
+        id="22222222-2222-2222-2222-222222222222", name="Sweep", segment_states=[], college_types=[], departments=[],
         objective="o", target_meetings_per_week=1,
         opportunity_type="hackathon", min_fit_score=70.0,
     )

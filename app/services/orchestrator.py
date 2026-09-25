@@ -50,19 +50,24 @@ def external_key(raw_lead: dict[str, Any]) -> str:
     return hashlib.sha256(basis.encode("utf-8")).hexdigest()[:32]
 
 
-def run_campaign(campaign: CampaignRead, crm: Any = crm_client) -> list[LeadRead]:
+def run_campaign(campaign: CampaignRead, crm: Any | None = None) -> list[LeadRead]:
     """Score and persist a campaign's leads.
 
     `crm` is injected so the pipeline is testable without a database; callers
     pass nothing and get the real client.
+
+    Resolved here rather than as a default argument. A default is bound once at
+    import, so patching the module attribute could not reach it and a test that
+    thought it had stubbed the client was quietly talking to the network.
     """
+    client = crm if crm is not None else crm_client
     settings = get_settings()
     raw_leads = discover_leads(campaign)
     ref = campaign_ref(campaign)
 
     keyed = [(external_key(raw), raw) for raw in raw_leads]
 
-    known_keys = _already_ingested(crm, ref, keyed) if settings.persistence_enabled else set()
+    known_keys = _already_ingested(client, ref, keyed) if settings.persistence_enabled else set()
 
     # Enrich only what will actually be scored. Enrichment is the one stage
     # that touches someone else's servers, so a college already ingested for
@@ -111,7 +116,7 @@ def run_campaign(campaign: CampaignRead, crm: Any = crm_client) -> list[LeadRead
             pending.append((index, raw, lead))
 
     if pending and settings.persistence_enabled:
-        _ingest(crm, campaign, ref, pending, results)
+        _ingest(client, campaign, ref, pending, results)
 
     return results
 

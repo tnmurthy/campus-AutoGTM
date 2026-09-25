@@ -11,6 +11,7 @@ from typing import Any
 
 class FakeCrm:
     def __init__(self, fail_ingest: bool = False, fail_preflight: bool = False):
+        self.campaigns: dict[str, dict[str, Any]] = {}
         self.ledger: dict[tuple[str, str], dict[str, Any]] = {}
         self.colleges: dict[str, str] = {}
         self.ingest_calls: list[list[dict[str, Any]]] = []
@@ -75,6 +76,36 @@ class FakeCrm:
             self.ledger[slot] = row
             results.append({**row, "college_created": college_created, "created": True})
         return results
+
+    # -- campaigns ----------------------------------------------------------
+
+    def campaign_upsert(self, campaign: dict[str, Any]) -> dict[str, Any]:
+        """Mirrors campaign_upsert, including the validation it performs."""
+        if campaign.get("opportunity_type") not in (
+            "hackathon",
+            "training",
+            "internship",
+            "seminar",
+        ):
+            raise RuntimeError(
+                f"opportunity_type must be hackathon, training, internship or "
+                f"seminar; got {campaign.get('opportunity_type')!r}"
+            )
+        if not str(campaign.get("name", "")).strip():
+            raise RuntimeError("a campaign needs a name")
+
+        campaign_id = campaign.get("id") or f"camp-{len(self.campaigns) + 1}"
+        row = {**campaign, "id": campaign_id, "is_active": campaign.get("is_active", True)}
+        self.campaigns[campaign_id] = row
+        return row
+
+    def campaign_fetch(self, campaign_id: str | None = None) -> list[dict[str, Any]]:
+        """One campaign by id, or every active one when id is omitted."""
+        if campaign_id is not None:
+            row = self.campaigns.get(campaign_id)
+            return [row] if row else []
+        return [r for r in self.campaigns.values() if r.get("is_active", True)]
+
 
 
 # ---------------------------------------------------------------------------

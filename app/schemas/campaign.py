@@ -35,4 +35,39 @@ class CampaignCreate(CampaignBase):
 
 
 class CampaignRead(CampaignBase):
-    id: int
+    # A uuid from the campaigns table, not a counter. Campaigns are rows now,
+    # so their identity comes from the database rather than from however many
+    # happened to be created since the process started.
+    id: str
+    is_active: bool = True
+
+    @classmethod
+    def from_row(cls, row: dict) -> "CampaignRead":
+        """Build from a campaigns row as campaign_fetch returns it."""
+        return cls(
+            id=str(row["id"]),
+            name=row["name"],
+            objective=row.get("objective") or "",
+            segment_states=list(row.get("segment_states") or []),
+            college_types=list(row.get("college_types") or []),
+            departments=list(row.get("departments") or []),
+            opportunity_type=row.get("opportunity_type") or "training",
+            min_fit_score=float(row.get("min_fit_score") or DEFAULT_MIN_FIT_SCORE),
+            target_meetings_per_week=int(row.get("target_meetings_per_week") or 0),
+            is_active=bool(row.get("is_active", True)),
+        )
+
+    def to_payload(self) -> dict:
+        """The shape campaign_upsert expects."""
+        return {
+            "id": self.id,
+            "name": self.name,
+            "objective": self.objective,
+            "segment_states": self.segment_states,
+            "college_types": self.college_types,
+            "departments": self.departments,
+            "opportunity_type": self.opportunity_type,
+            "min_fit_score": self.min_fit_score,
+            "target_meetings_per_week": self.target_meetings_per_week,
+            "is_active": self.is_active,
+        }

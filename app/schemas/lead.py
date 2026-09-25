@@ -22,7 +22,7 @@ class LeadRead(BaseModel):
     fit_label: Optional[str] = None
     fit_score: float = 0.0
     rationale: Optional[str] = None
-    source_campaign_id: int
+    source_campaign_id: str
     status: str
 
     # Populated once the lead reaches Postgres.

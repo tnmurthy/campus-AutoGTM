@@ -23,7 +23,7 @@ Jev fit score, and `notes` carrying the model's one-line rationale.
 
 | Stage | State |
 |---|---|
-| Campaign definition | Working (in-process store, not persisted) |
+| Campaign definition | Working — persisted in BrainOpsHub |
 | Prospector / signal discovery | **Stub** — returns one fixed fake lead; AICTE ingest not built |
 | Jev scoring | Working |
 | Qualification threshold | Working, per campaign |
@@ -119,8 +119,9 @@ key, and never log the service role key.
 - **The database owns the schema.** `ingest_lead()` is atomic per lead,
   idempotent on `(campaign_ref, external_key)`, and fixes stage and source
   itself: the agent may open a deal, never advance or disguise one.
-- **Campaigns live in memory.** They do not survive a restart and are not
-  shared across workers. Single worker only, until they get a table.
+- **Campaigns are rows in BrainOpsHub**, reached through `campaign_upsert` and
+  `campaign_fetch`. They survive a restart and ops can see them. The endpoints
+  refuse with 503 when no CRM is configured rather than half-working.
 
 ## Tests
 

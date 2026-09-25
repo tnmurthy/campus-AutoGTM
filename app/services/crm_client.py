@@ -37,13 +37,14 @@ def _scoped_token(secret: str, role: str, ttl: int) -> str:
     )
 
 
-def _rpc(name: str, payload: dict[str, Any] | list[Any]) -> Any:
+def _rpc(name: str, args: dict[str, Any]) -> Any:
+    """Call a Postgres function. `args` maps its parameter names to values."""
     settings = get_settings()
     url, anon_key, jwt_secret = settings.require_crm()
     token = _scoped_token(jwt_secret, settings.crm_role, settings.crm_token_ttl_seconds)
 
     endpoint = f"{url.rstrip('/')}/rest/v1/rpc/{name}"
-    body = {"payload": payload}
+    body = args
 
     last_error: Exception | None = None
     for attempt in range(1, MAX_ATTEMPTS + 1):
@@ -83,9 +84,11 @@ def preflight(campaign_ref: str, external_keys: list[str], college_names: list[s
     result = _rpc(
         "ingest_preflight",
         {
-            "campaign_ref": campaign_ref,
-            "external_keys": external_keys,
-            "college_names": college_names,
+            "payload": {
+                "campaign_ref": campaign_ref,
+                "external_keys": external_keys,
+                "college_names": college_names,
+            }
         },
     )
     if not isinstance(result, dict):
@@ -93,11 +96,27 @@ def preflight(campaign_ref: str, external_keys: list[str], college_names: list[s
     return result
 
 
+def campaign_upsert(campaign: dict[str, Any]) -> dict[str, Any]:
+    """Create or update a campaign. Returns the stored row."""
+    result = _rpc("campaign_upsert", {"payload": campaign})
+    if not isinstance(result, dict):
+        raise CrmError(f"campaign_upsert returned {type(result).__name__}, expected an object")
+    return result
+
+
+def campaign_fetch(campaign_id: str | None = None) -> list[dict[str, Any]]:
+    """One campaign by id, or every active campaign when id is omitted."""
+    result = _rpc("campaign_fetch", {"p_id": campaign_id})
+    if not isinstance(result, list):
+        raise CrmError(f"campaign_fetch returned {type(result).__name__}, expected an array")
+    return result
+
+
 def ingest(leads: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Write a batch. Atomic per lead, idempotent on (campaign_ref, external_key)."""
     if not leads:
         return []
-    result = _rpc("ingest_lead", leads)
+    result = _rpc("ingest_lead", {"payload": leads})
     if not isinstance(result, list):
         raise CrmError(f"ingest_lead returned {type(result).__name__}, expected an array")
     return result
